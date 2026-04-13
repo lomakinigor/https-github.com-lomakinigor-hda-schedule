@@ -85,6 +85,10 @@ interface Event {
   maxParticipants: number;
   description?: string;
   price?: number;
+  discounts?: string;
+  access?: string;
+  format?: 'Онлайн' | 'Оффлайн';
+  sessionsCount?: number;
 }
 
 interface UserProfile {
@@ -917,8 +921,13 @@ function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
             {event.category}
           </span>
           <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
-            <MapPin size={10} /> {event.location}
+            <MapPin size={10} /> {event.location} {event.format && `(${event.format})`}
           </span>
+          {event.price !== undefined && (
+            <span className="text-[10px] font-black text-logo-blue bg-blue-50 px-2 py-1 rounded-lg">
+              {event.price === 0 ? 'БЕСПЛАТНО' : `${event.price.toLocaleString()} ₽`}
+            </span>
+          )}
         </div>
         <h3 className="text-2xl font-black tracking-tight group-hover:text-logo-blue transition-colors">{event.title}</h3>
         {event.description && (
@@ -958,14 +967,25 @@ function AdminPanel({ onBack, events }: { onBack: () => void, events: Event[] })
   const [description, setDescription] = useState('');
   const [speakerName, setSpeakerName] = useState('');
   const [location, setLocation] = useState('');
+  const [branch, setBranch] = useState('Все филиалы');
+  const [sessionsCount, setSessionsCount] = useState(1);
   const [startTime, setStartTime] = useState('');
   const [duration, setDuration] = useState(2); // hours
   const [category, setCategory] = useState('Семинары');
   const [price, setPrice] = useState(0);
+  const [discounts, setDiscounts] = useState('');
+  const [access, setAccess] = useState('');
+  const [format, setFormat] = useState<'Онлайн' | 'Оффлайн'>('Оффлайн');
   const [maxParticipants, setMaxParticipants] = useState(50);
   const [isListening, setIsListening] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<Event[]>([]);
+
+  const locations = Array.from(new Set(events.map(e => e.location))).sort((a, b) => {
+    const countA = events.filter(e => e.location === a).length;
+    const countB = events.filter(e => e.location === b).length;
+    return countB - countA;
+  });
 
   const checkConflicts = (newStart: Date, newEnd: Date) => {
     return events.filter(event => {
@@ -1024,10 +1044,15 @@ function AdminPanel({ onBack, events }: { onBack: () => void, events: Event[] })
         description,
         speakerName,
         location,
+        branch,
+        sessionsCount: Number(sessionsCount),
         startTime: start,
         endTime: end,
         category,
         price: Number(price),
+        discounts,
+        access,
+        format,
         maxParticipants: Number(maxParticipants),
         registeredCount: 0,
         status: 'planned',
@@ -1126,14 +1151,55 @@ function AdminPanel({ onBack, events }: { onBack: () => void, events: Event[] })
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="space-y-2">
                 <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Локация</label>
+                <div className="relative">
+                  <input 
+                    type="text"
+                    list="admin-locations"
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
+                    placeholder="Выберите или введите..."
+                    required
+                  />
+                  <datalist id="admin-locations">
+                    {locations.map(loc => <option key={loc} value={loc} />)}
+                  </datalist>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Филиал</label>
+                <select 
+                  value={branch}
+                  onChange={(e) => setBranch(e.target.value)}
+                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all appearance-none cursor-pointer"
+                >
+                  {BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Кол-во занятий</label>
                 <input 
-                  type="text"
-                  value={location}
-                  onChange={(e) => setLocation(e.target.value)}
+                  type="number"
+                  value={sessionsCount}
+                  onChange={(e) => setSessionsCount(Number(e.target.value))}
                   className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
-                  placeholder="Место или 'Онлайн'..."
+                  min="1"
                   required
                 />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Формат</label>
+                <select 
+                  value={format}
+                  onChange={(e) => setFormat(e.target.value as any)}
+                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all appearance-none cursor-pointer"
+                >
+                  <option value="Оффлайн">Оффлайн</option>
+                  <option value="Онлайн">Онлайн</option>
+                </select>
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Категория</label>
@@ -1145,6 +1211,9 @@ function AdminPanel({ onBack, events }: { onBack: () => void, events: Event[] })
                   {CATEGORIES.filter(c => c !== 'Все направления').map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="space-y-2">
                 <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Цена (₽)</label>
                 <input 
@@ -1153,6 +1222,26 @@ function AdminPanel({ onBack, events }: { onBack: () => void, events: Event[] })
                   onChange={(e) => setPrice(Number(e.target.value))}
                   className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
                   min="0"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Скидки</label>
+                <input 
+                  type="text"
+                  value={discounts}
+                  onChange={(e) => setDiscounts(e.target.value)}
+                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
+                  placeholder="Напр. '10% до 01.05'..."
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Допуск</label>
+                <input 
+                  type="text"
+                  value={access}
+                  onChange={(e) => setAccess(e.target.value)}
+                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
+                  placeholder="Напр. 'Все желающие'..."
                 />
               </div>
             </div>
@@ -1328,10 +1417,22 @@ function EventInputPublic({ events, onBack }: { events: Event[], onBack: () => v
   const [title, setTitle] = useState('');
   const [speakerName, setSpeakerName] = useState('');
   const [location, setLocation] = useState('');
+  const [branch, setBranch] = useState('Все филиалы');
+  const [sessionsCount, setSessionsCount] = useState(1);
   const [startTime, setStartTime] = useState('');
   const [duration, setDuration] = useState(2);
+  const [price, setPrice] = useState(0);
+  const [discounts, setDiscounts] = useState('');
+  const [access, setAccess] = useState('');
+  const [format, setFormat] = useState<'Онлайн' | 'Оффлайн'>('Оффлайн');
   const [status, setStatus] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<Event[]>([]);
+
+  const locations = Array.from(new Set(events.map(e => e.location))).sort((a, b) => {
+    const countA = events.filter(e => e.location === a).length;
+    const countB = events.filter(e => e.location === b).length;
+    return countB - countA;
+  });
 
   const checkConflicts = (newStart: Date, newEnd: Date) => {
     return events.filter(event => {
@@ -1359,10 +1460,15 @@ function EventInputPublic({ events, onBack }: { events: Event[], onBack: () => v
         title,
         speakerName,
         location,
+        branch,
+        sessionsCount: Number(sessionsCount),
         startTime: start,
         endTime: end,
         category: 'Семинар',
-        price: 0,
+        price: Number(price),
+        discounts,
+        access,
+        format,
         maxParticipants: 50,
         registeredCount: 0,
         status: 'planned',
@@ -1381,10 +1487,60 @@ function EventInputPublic({ events, onBack }: { events: Event[], onBack: () => v
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_350px] gap-12">
         <form onSubmit={handleSubmit} className="space-y-6 bg-white p-10 rounded-[40px] border border-slate-100 shadow-xl">
           <div className="space-y-4">
-            <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Название события" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
-            <input type="text" value={speakerName} onChange={e => setSpeakerName(e.target.value)} placeholder="Спикер" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
-            <input type="text" value={location} onChange={e => setLocation(e.target.value)} placeholder="Локация" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
-            <input type="datetime-local" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Название события" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
+              <input type="text" value={speakerName} onChange={e => setSpeakerName(e.target.value)} placeholder="Спикер" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="relative">
+                <input 
+                  type="text" 
+                  list="public-locations"
+                  value={location} 
+                  onChange={e => setLocation(e.target.value)} 
+                  placeholder="Локация (выберите или введите)" 
+                  className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" 
+                  required 
+                />
+                <datalist id="public-locations">
+                  {locations.map(loc => <option key={loc} value={loc} />)}
+                </datalist>
+              </div>
+              <select 
+                value={branch} 
+                onChange={e => setBranch(e.target.value)} 
+                className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none appearance-none"
+              >
+                {BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex items-center gap-2 px-6 py-4 bg-slate-50 rounded-2xl">
+                <span className="text-xs font-black text-slate-400 uppercase">Занятий:</span>
+                <input type="number" value={sessionsCount} onChange={e => setSessionsCount(Number(e.target.value))} className="flex-1 bg-transparent font-bold outline-none" min="1" required />
+              </div>
+              <select 
+                value={format} 
+                onChange={e => setFormat(e.target.value as any)} 
+                className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none appearance-none"
+              >
+                <option value="Оффлайн">Оффлайн</option>
+                <option value="Онлайн">Онлайн</option>
+              </select>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <input type="datetime-local" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
+              <div className="flex items-center gap-2 px-6 py-4 bg-slate-50 rounded-2xl">
+                <span className="text-xs font-black text-slate-400 uppercase">Цена:</span>
+                <input type="number" value={price} onChange={e => setPrice(Number(e.target.value))} className="flex-1 bg-transparent font-bold outline-none" min="0" />
+              </div>
+            </div>
+
+            <input type="text" value={discounts} onChange={e => setDiscounts(e.target.value)} placeholder="Возможные скидки" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" />
+            <input type="text" value={access} onChange={e => setAccess(e.target.value)} placeholder="Кто допускается (уровень доступа)" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" />
           </div>
 
           {conflicts.length > 0 && (
@@ -1394,7 +1550,7 @@ function EventInputPublic({ events, onBack }: { events: Event[], onBack: () => v
           )}
 
           <button type="submit" className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest">
-            {status || "Сохранить"}
+            {status || "Сохранить мероприятие"}
           </button>
         </form>
 
