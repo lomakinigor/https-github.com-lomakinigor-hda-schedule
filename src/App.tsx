@@ -19,7 +19,8 @@ import {
   ChevronDown,
   AlertCircle,
   Copy,
-  Check
+  Check,
+  BookOpen
 } from 'lucide-react';
 import { 
   signInWithPopup, 
@@ -126,7 +127,7 @@ function getEventDate(startTime: any): Date {
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [view, setView] = useState<'schedule' | 'admin' | 'profile' | 'event-input' | 'participant-card'>('schedule');
+  const [view, setView] = useState<'schedule' | 'admin' | 'profile' | 'event-input' | 'participant-card' | 'blog-rules'>('schedule');
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -616,10 +617,16 @@ export default function App() {
                 active={view === 'participant-card'} 
                 onClick={() => setView('participant-card')} 
               />
+              <SidebarItem 
+                icon={<BookOpen size={18} />} 
+                label="Правила блога" 
+                active={view === 'blog-rules'} 
+                onClick={() => setView('blog-rules')} 
+              />
               {profile?.role === 'admin' && (
                 <SidebarItem 
                   icon={<Settings size={18} />} 
-                  label="Админ-панель" 
+                  label="Управление системой" 
                   active={view === 'admin'} 
                   onClick={() => setView('admin')} 
                 />
@@ -903,6 +910,29 @@ export default function App() {
             </motion.div>
           </motion.div>
         )}
+        {view === 'blog-rules' && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }} 
+            className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 md:p-8 overflow-y-auto"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-3xl bg-white rounded-[40px] shadow-2xl overflow-hidden"
+            >
+              <button 
+                onClick={() => setView('schedule')} 
+                className="absolute top-6 right-6 z-10 p-2 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
+              >
+                <X size={20} />
+              </button>
+              <BlogRulesView />
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   );
@@ -940,7 +970,7 @@ function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
             {event.category}
           </span>
           <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
-            <MapPin size={10} /> {event.location} {event.format && `(${event.format})`}
+            <MapPin size={10} /> {event.location} (Место проведения) {event.format && `— ${event.format}`}
           </span>
           {event.price !== undefined && (
             <span className="text-[10px] font-black text-logo-blue bg-blue-50 px-2 py-1 rounded-lg">
@@ -1446,6 +1476,7 @@ function EventInputPublic({ events, onBack }: { events: Event[], onBack: () => v
   const [discounts, setDiscounts] = useState('');
   const [access, setAccess] = useState('');
   const [format, setFormat] = useState<'Онлайн' | 'Оффлайн'>('Оффлайн');
+  const [maxParticipants, setMaxParticipants] = useState(50);
   const [status, setStatus] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<Event[]>([]);
 
@@ -1490,7 +1521,7 @@ function EventInputPublic({ events, onBack }: { events: Event[], onBack: () => v
         discounts,
         access,
         format,
-        maxParticipants: 50,
+        maxParticipants: Number(maxParticipants),
         registeredCount: 0,
         status: 'planned',
         createdAt: serverTimestamp()
@@ -1520,7 +1551,7 @@ function EventInputPublic({ events, onBack }: { events: Event[], onBack: () => v
                   list="public-locations"
                   value={location} 
                   onChange={e => setLocation(e.target.value)} 
-                  placeholder="Локация (выберите или введите)" 
+                  placeholder="Где будет проходить? (Место проведения)" 
                   className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" 
                   required 
                 />
@@ -1560,7 +1591,13 @@ function EventInputPublic({ events, onBack }: { events: Event[], onBack: () => v
               </div>
             </div>
 
-            <input type="text" value={discounts} onChange={e => setDiscounts(e.target.value)} placeholder="Возможные скидки" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <input type="text" value={discounts} onChange={e => setDiscounts(e.target.value)} placeholder="Возможные скидки" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" />
+              <div className="flex items-center gap-2 px-6 py-4 bg-slate-50 rounded-2xl">
+                <span className="text-xs font-black text-slate-400 uppercase">Мест:</span>
+                <input type="number" value={maxParticipants} onChange={e => setMaxParticipants(Number(e.target.value))} className="flex-1 bg-transparent font-bold outline-none" min="1" required />
+              </div>
+            </div>
             <input type="text" value={access} onChange={e => setAccess(e.target.value)} placeholder="Кто допускается (уровень доступа)" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" />
           </div>
 
@@ -1629,6 +1666,131 @@ function MiniCalendar({ events }: { events: Event[] }) {
   );
 }
 
+function BlogRulesView() {
+  return (
+    <div className="p-8 md:p-12 max-h-[90vh] overflow-y-auto">
+      <div className="flex items-center gap-4 mb-8">
+        <div className="p-3 bg-logo-blue/10 rounded-2xl text-logo-blue">
+          <BookOpen size={32} />
+        </div>
+        <div>
+          <h2 className="text-3xl font-black">Правила ведения блога</h2>
+          <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Академия Развития Человека</p>
+        </div>
+      </div>
+
+      <div className="space-y-10">
+        <section className="space-y-4">
+          <h3 className="text-xl font-black flex items-center gap-2">
+            <div className="w-2 h-8 bg-logo-blue rounded-full" />
+            1. Общие принципы
+          </h3>
+          <div className="p-6 bg-slate-50 rounded-[32px] border border-slate-100 space-y-2">
+            <p className="text-sm text-slate-700 font-bold flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-logo-blue rounded-full" /> Блог ведётся ежедневно. Минимум один пост в день.
+            </p>
+            <p className="text-sm text-slate-700 font-bold flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-logo-blue rounded-full" /> Пост — это живой рассказ, а не технический отчёт.
+            </p>
+            <p className="text-sm text-slate-700 font-bold flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-logo-blue rounded-full" /> Понятно любому человеку, даже далёкому от технологий.
+            </p>
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          <h3 className="text-xl font-black flex items-center gap-2">
+            <div className="w-2 h-8 bg-logo-orange rounded-full" />
+            2. Тон и стиль
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-6 bg-slate-50 rounded-[32px] border border-slate-100">
+              <p className="text-xs font-black text-logo-orange uppercase mb-2">Человечность</p>
+              <p className="text-sm text-slate-600 font-medium leading-relaxed">
+                Пиши легко, иногда с иронией. Избегай сухого официального языка. Можно быть честным: «мы облажались» или «неожиданно сработало».
+              </p>
+            </div>
+            <div className="p-6 bg-slate-50 rounded-[32px] border border-slate-100">
+              <p className="text-xs font-black text-logo-orange uppercase mb-2">Динамика</p>
+              <p className="text-sm text-slate-600 font-medium leading-relaxed">
+                Используй короткие предложения. Можно задавать вопросы читателю, шутить и делиться эмоциями.
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-4 bg-red-50 rounded-2xl border border-red-100">
+              <p className="text-[10px] font-black text-red-600 uppercase mb-1">❌ Плохо:</p>
+              <p className="text-xs italic text-red-500">«Был произведён рефакторинг модульной архитектуры...»</p>
+            </div>
+            <div className="p-4 bg-green-50 rounded-2xl border border-green-100">
+              <p className="text-[10px] font-black text-green-600 uppercase mb-1">✅ Хорошо:</p>
+              <p className="text-xs italic text-green-500">«Переписали внутренности движка. Стало быстрее. Заняло два дня вместо четырех часов...»</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          <h3 className="text-xl font-black flex items-center gap-2">
+            <div className="w-2 h-8 bg-blue-500 rounded-full" />
+            3. Язык и термины
+          </h3>
+          <div className="p-6 bg-slate-50 rounded-[32px] border border-slate-100 space-y-4">
+            <p className="text-sm text-slate-600 font-medium leading-relaxed">
+              Запрещено использовать профессиональные термины без расшифровки. Объясняй их простым языком сразу же.
+            </p>
+            <div className="p-4 bg-white rounded-2xl border border-slate-100">
+              <p className="text-[10px] font-black text-blue-600 uppercase mb-1">Пример:</p>
+              <p className="text-xs italic text-slate-500">
+                «Настроили автоматическую сборку и выкладку (CI/CD — это когда код сам себя собирает и публикует без участия человека).»
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          <h3 className="text-xl font-black flex items-center gap-2">
+            <div className="w-2 h-8 bg-purple-500 rounded-full" />
+            4. Социальные сети
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { name: 'Сайт', style: 'Полный' },
+              { name: 'Telegram', style: 'Живой' },
+              { name: 'MAX', style: 'Короткий' },
+              { name: 'VK', style: 'Визуальный' }
+            ].map(platform => (
+              <div key={platform.name} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 text-center">
+                <p className="text-xs font-black text-slate-900">{platform.name}</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase">{platform.style}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          <h3 className="text-xl font-black flex items-center gap-2">
+            <div className="w-2 h-8 bg-red-500 rounded-full" />
+            5. Стоп-лист
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {['БД', 'ТЗ', 'UI/UX', 'Деплой', 'CI/CD', 'Docker', 'Kubernetes', 'Рефакторинг', 'Канцеляризмы'].map(word => (
+              <span key={word} className="px-4 py-2 bg-red-50 text-red-600 rounded-full text-xs font-black uppercase tracking-widest border border-red-100">
+                {word}
+              </span>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <button 
+        onClick={() => window.print()}
+        className="mt-12 w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-logo-blue transition-all flex items-center justify-center gap-3"
+      >
+        <Copy size={20} /> Распечатать правила
+      </button>
+    </div>
+  );
+}
 function ParticipantCardPublic({ onBack, events }: { onBack: () => void, events: Event[] }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -1722,12 +1884,12 @@ function ParticipantCardPublic({ onBack, events }: { onBack: () => void, events:
           <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Мессенджеры и доп. данные</span>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <input type="text" value={whatsapp} onChange={e => setWhatsapp(e.target.value)} placeholder="WhatsApp номер" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" />
-            <input type="text" value={telegram} onChange={e => setTelegram(e.target.value)} placeholder="Telegram nickname" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" />
+            <input type="text" value={telegram} onChange={e => setTelegram(e.target.value)} placeholder="Telegram (имя пользователя)" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <input type="text" value={city} onChange={e => setCity(e.target.value)} placeholder="Город проживания" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" />
-            <input type="text" value={maxNumber} onChange={e => setMaxNumber(e.target.value)} placeholder="Макс. номер" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" />
+            <input type="text" value={maxNumber} onChange={e => setMaxNumber(e.target.value)} placeholder="Номер в системе (Макс. номер)" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" />
           </div>
         </div>
 
