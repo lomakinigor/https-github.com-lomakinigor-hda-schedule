@@ -90,6 +90,7 @@ interface Event {
   access?: string;
   format?: 'Онлайн' | 'Оффлайн';
   sessionsCount?: number;
+  sessionDates?: any[];
 }
 
 interface UserProfile {
@@ -992,6 +993,34 @@ function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
             </p>
           )}
         </div>
+
+        {/* Sessions Display */}
+        {event.sessionsCount && event.sessionsCount > 1 && (
+          <div className="mt-4 pt-4 border-t border-slate-50">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+              <Calendar size={12} /> Расписание занятий ({event.sessionsCount})
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {Array.from({ length: event.sessionsCount }).map((_, idx) => {
+                const sessionDate = event.sessionDates?.[idx];
+                const formattedDate = sessionDate 
+                  ? getEventDate(sessionDate).toLocaleString('ru', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+                  : 'Дата не указана';
+                
+                return (
+                  <div key={idx} className="px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-100 flex items-center gap-2">
+                    <span className="text-[9px] font-black text-logo-blue bg-blue-50 w-4 h-4 flex items-center justify-center rounded-full">
+                      {idx + 1}
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-600">
+                      {formattedDate}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="flex flex-col items-center md:items-end w-full md:w-auto">
@@ -1778,6 +1807,28 @@ function BlogRulesView() {
                 {word}
               </span>
             ))}
+          </div>
+        </section>
+
+        <section className="space-y-4 pt-10 border-t border-slate-100">
+          <h3 className="text-xl font-black flex items-center gap-2">
+            <div className="w-2 h-8 bg-logo-blue rounded-full" />
+            Дополнение: Посты в дни без активности
+          </h3>
+          <div className="p-6 bg-blue-50 rounded-[32px] border border-blue-100 space-y-4">
+            <p className="text-sm text-slate-700 font-medium leading-relaxed">
+              Если в будний день в приложении не было изменений, система создаёт шуточный пост.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="p-4 bg-white rounded-2xl border border-blue-100">
+                <p className="text-[10px] font-black text-logo-blue uppercase mb-1">Примеры тем:</p>
+                <p className="text-xs italic text-slate-500">«вайбкодер спал», «муза не пришла», «код решил отдохнуть».</p>
+              </div>
+              <div className="p-4 bg-white rounded-2xl border border-blue-100">
+                <p className="text-[10px] font-black text-logo-blue uppercase mb-1">Правило выходных:</p>
+                <p className="text-xs italic text-slate-500">В субботу и воскресенье шуточные посты не создаются.</p>
+              </div>
+            </div>
           </div>
         </section>
       </div>
