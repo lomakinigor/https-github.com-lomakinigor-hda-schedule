@@ -1,0 +1,141 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields:
+    //   - uid: string (required, immutable)
+    //   - displayName: string (required)
+    //   - email: string (required, format: email)
+    //   - role: string (required, enum: ['admin', 'speaker', 'participant'])
+    //   - branch: string (optional)
+    //   - mentorId: string (optional)
+    //   - referrerId: string (optional)
+    //   - bonusBalance: number (optional)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: events
+    // Fields:
+    //   - title: string (required)
+    //   - speakerId: string (required)
+    //   - speakerName: string (required)
+    //   - location: string (required)
+    //   - startTime: timestamp (required)
+    //   - endTime: timestamp (required)
+    //   - price: number (required)
+    //   - maxParticipants: number (required)
+    //   - registeredCount: number (required)
+    //   - status: string (required, enum: ['planned', 'active', 'completed', 'cancelled'])
+    //
+    // Collection: registrations
+    // Fields:
+    //   - userId: string (required)
+    //   - eventId: string (required)
+    //   - status: string (required)
+    //   - paid: bool (required)
+    //   - amountPaid: number (required)
+    //
+    // Collection: finance
+    // Fields:
+    //   - type: string (required, enum: ['income', 'expense'])
+    //   - amount: number (required)
+    //   - category: string (required)
+    //   - eventId: string (optional)
+    //   - userId: string (optional)
+    //   - date: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        getUserData().role == 'admin' ||
+        (request.auth.token.email == "il17184@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isSpeaker() {
+      return isAuthenticated() && getUserData().role == 'speaker';
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'role', 'email', 'createdAt']) &&
+             data.uid is string &&
+             data.displayName is string && data.displayName.size() > 0 && data.displayName.size() < 100 &&
+             data.role in ['admin', 'speaker', 'participant'] &&
+             data.email is string && data.email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidEvent(data) {
+      return data.keys().hasAll(['title', 'speakerId', 'speakerName', 'location', 'startTime', 'endTime', 'price', 'maxParticipants', 'registeredCount', 'status']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.speakerId is string &&
+             data.location is string &&
+             data.startTime is timestamp &&
+             data.endTime is timestamp &&
+             data.endTime > data.startTime &&
+             data.price is number && data.price >= 0 &&
+             data.maxParticipants is number && data.maxParticipants > 0 &&
+             data.registeredCount is number && data.registeredCount >= 0 &&
+             data.status in ['planned', 'active', 'completed', 'cancelled'];
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated(); // Allow reading other users for mentor/referrer info
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'participant' || isAdmin());
+      allow update: if isAuthenticated() && (
+        (isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role || isAdmin())) ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['bonusBalance']) && request.resource.data.bonusBalance > resource.data.bonusBalance) ||
+        isAdmin()
+      );
+    }
+
+    // Events collection
+    match /events/{eventId} {
+      allow read: if true; // Publicly readable schedule
+      allow create: if isAdmin() || isSpeaker();
+      allow update: if isAdmin() || isSpeaker() || (isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['registeredCount']));
+      allow delete: if isAdmin();
+    }
+
+    // Registrations collection
+    match /registrations/{regId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin() || (isSpeaker() && get(/databases/$(database)/documents/events/$(resource.data.eventId)).data.speakerId == request.auth.uid));
+      allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
+      allow update: if isAdmin() || (isAuthenticated() && isOwner(resource.data.userId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']));
+      allow delete: if isAdmin();
+    }
+
+    // Finance collection
+    match /finance/{recordId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+  }
+}
