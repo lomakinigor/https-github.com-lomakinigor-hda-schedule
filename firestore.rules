@@ -24,12 +24,31 @@ service cloud.firestore {
     //   - speakerId: string (required)
     //   - speakerName: string (required)
     //   - location: string (required)
+    //   - branch: string (required)
+    //   - sessionsCount: number (optional)
     //   - startTime: timestamp (required)
     //   - endTime: timestamp (required)
     //   - price: number (required)
+    //   - discounts: string (optional)
+    //   - access: string (optional)
+    //   - format: string (optional, enum: ['Онлайн', 'Оффлайн'])
     //   - maxParticipants: number (required)
     //   - registeredCount: number (required)
     //   - status: string (required, enum: ['planned', 'active', 'completed', 'cancelled'])
+    //
+    // Collection: participants
+    // Fields:
+    //   - name: string (required)
+    //   - phone: string (required)
+    //   - telegram: string (optional)
+    //   - whatsapp: string (optional)
+    //   - maxNumber: string (optional)
+    //   - city: string (optional)
+    //   - email: string (optional)
+    //   - participantStatus: string (optional)
+    //   - attendedEvents: string (optional)
+    //   - autoAttendedEvents: list (optional)
+    //   - createdAt: timestamp (required)
     //
     // Collection: registrations
     // Fields:
@@ -86,9 +105,8 @@ service cloud.firestore {
     }
 
     function isValidEvent(data) {
-      return data.keys().hasAll(['title', 'speakerId', 'speakerName', 'location', 'startTime', 'endTime', 'price', 'maxParticipants', 'registeredCount', 'status']) &&
+      return data.keys().hasAll(['title', 'speakerName', 'location', 'startTime', 'endTime', 'price', 'maxParticipants', 'registeredCount', 'status']) &&
              data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
-             data.speakerId is string &&
              data.location is string &&
              data.startTime is timestamp &&
              data.endTime is timestamp &&
@@ -97,6 +115,15 @@ service cloud.firestore {
              data.maxParticipants is number && data.maxParticipants > 0 &&
              data.registeredCount is number && data.registeredCount >= 0 &&
              data.status in ['planned', 'active', 'completed', 'cancelled'];
+    }
+
+    function isValidParticipant(data) {
+      return data.keys().hasAll(['name', 'phone', 'createdAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.phone is string && data.phone.size() > 0 && data.phone.size() < 30 &&
+             (!('participantStatus' in data) || data.participantStatus in ['Новый', 'Постоянный', 'Слушатель', 'Студент', 'Выпускник']) &&
+             (!('autoAttendedEvents' in data) || data.autoAttendedEvents is list) &&
+             data.createdAt is timestamp;
     }
 
     // ===============================================================
@@ -117,7 +144,7 @@ service cloud.firestore {
     // Participants collection (Public Form)
     match /participants/{partId} {
       allow read: if isAdmin();
-      allow create: if true; // Publicly accessible form
+      allow create: if isValidParticipant(request.resource.data);
     }
 
     // Events collection

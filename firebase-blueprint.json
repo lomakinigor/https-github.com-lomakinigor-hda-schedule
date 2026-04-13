@@ -65,6 +65,25 @@
         "date": { "type": "string", "format": "date-time" }
       },
       "required": ["type", "amount", "date"]
+    },
+    "Participant": {
+      "title": "Participant",
+      "description": "A public participant card submission.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Full name." },
+        "phone": { "type": "string", "description": "Phone number." },
+        "telegram": { "type": "string", "description": "Telegram nickname." },
+        "whatsapp": { "type": "string", "description": "WhatsApp number." },
+        "maxNumber": { "type": "string", "description": "Max number." },
+        "city": { "type": "string", "description": "City of residence." },
+        "email": { "type": "string", "format": "email", "description": "Contact email." },
+        "participantStatus": { "type": "string", "enum": ["Новый", "Постоянный", "Слушатель", "Студент", "Выпускник"] },
+        "attendedEvents": { "type": "string", "description": "List of events attended (manual entry)." },
+        "autoAttendedEvents": { "type": "array", "items": { "type": "string" }, "description": "List of events attended (auto-fetched from system)." },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "phone"]
     }
   },
   "firestore": {
@@ -83,6 +102,10 @@
     "/finance/{recordId}": {
       "schema": "Finance",
       "description": "Financial records."
+    },
+    "/participants/{partId}": {
+      "schema": "Participant",
+      "description": "Public participant card submissions."
     }
   }
 }

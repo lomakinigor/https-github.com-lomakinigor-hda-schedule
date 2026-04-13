@@ -881,9 +881,26 @@ export default function App() {
           </motion.div>
         )}
         {view === 'participant-card' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white p-12 overflow-y-auto">
-            <button onClick={() => setView('schedule')} className="absolute top-8 right-8 p-2 hover:bg-slate-100 rounded-xl transition-colors"><X size={24} /></button>
-            <ParticipantCardPublic onBack={() => setView('schedule')} />
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }} 
+            className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 md:p-8 overflow-y-auto"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-2xl bg-white rounded-[40px] shadow-2xl overflow-hidden"
+            >
+              <button 
+                onClick={() => setView('schedule')} 
+                className="absolute top-6 right-6 z-10 p-2 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
+              >
+                <X size={20} />
+              </button>
+              <ParticipantCardPublic onBack={() => setView('schedule')} events={events} />
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -904,6 +921,8 @@ function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
   const date = getEventDate(event.startTime);
   const day = date.getDate().toString().padStart(2, '0');
   const month = date.toLocaleString('ru', { month: 'short' });
+  const registeredCount = event.registeredCount || 0;
+  const isFull = event.maxParticipants && registeredCount >= event.maxParticipants;
 
   return (
     <motion.div 
@@ -948,14 +967,16 @@ function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
       <div className="flex flex-col items-center md:items-end w-full md:w-auto">
         <button 
           onClick={onRegister}
-          disabled={isRegistering}
+          disabled={isRegistering || isFull}
           className="w-full md:w-auto bg-slate-900 text-white px-10 py-4 rounded-2xl font-bold text-sm hover:bg-logo-blue transition-all active:scale-95 shadow-xl shadow-slate-200 disabled:opacity-50"
         >
-          {isRegistering ? 'Запись...' : 'Записаться'}
+          {isRegistering ? 'Запись...' : isFull ? 'Мест нет' : 'Записаться'}
         </button>
-        <div className="mt-3 flex items-center gap-2 text-[10px] font-bold text-slate-400">
-          <Users size={12} />
-          <span>{event.registeredCount || 0} / {event.maxParticipants || '∞'} мест</span>
+        <div className={`mt-3 flex items-center gap-2 px-3 py-1.5 rounded-xl border ${isFull ? 'bg-red-50 border-red-100 text-red-600' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
+          <Users size={12} className={isFull ? 'text-red-400' : 'text-slate-400'} />
+          <span className="text-[10px] font-black uppercase tracking-widest">
+            {registeredCount} / {event.maxParticipants || '∞'} ЗАПИСАНО
+          </span>
         </div>
       </div>
     </motion.div>
@@ -1565,26 +1586,42 @@ function EventInputPublic({ events, onBack }: { events: Event[], onBack: () => v
 
 function MiniCalendar({ events }: { events: Event[] }) {
   const now = new Date();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).getDay();
   
-  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
-  const blanks = Array.from({ length: (firstDay + 6) % 7 }, (_, i) => i);
+  // Create an array of 35 days starting from today to fill a 5-week grid
+  const days = Array.from({ length: 35 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
+    return d;
+  });
 
   return (
     <div className="grid grid-cols-7 gap-2">
       {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(d => (
         <div key={d} className="text-[10px] font-black text-slate-300 text-center">{d}</div>
       ))}
-      {blanks.map(b => <div key={`b-${b}`} />)}
-      {days.map(d => {
+      {days.map((date, i) => {
         const hasEvent = events.some(e => {
           const ed = getEventDate(e.startTime);
-          return ed.getDate() === d && ed.getMonth() === now.getMonth() && ed.getFullYear() === now.getFullYear();
+          return ed.getDate() === date.getDate() && 
+                 ed.getMonth() === date.getMonth() && 
+                 ed.getFullYear() === date.getFullYear();
         });
+        const isToday = date.getDate() === now.getDate() && 
+                        date.getMonth() === now.getMonth() && 
+                        date.getFullYear() === now.getFullYear();
+
         return (
-          <div key={d} className={`aspect-square flex items-center justify-center rounded-lg text-xs font-bold ${hasEvent ? 'bg-logo-orange text-white' : 'bg-slate-50 text-slate-400'}`}>
-            {d}
+          <div 
+            key={i} 
+            className={`aspect-square flex flex-col items-center justify-center rounded-lg text-[10px] font-bold transition-all ${
+              hasEvent 
+                ? 'bg-logo-orange text-white shadow-lg shadow-logo-orange/20' 
+                : isToday 
+                  ? 'bg-logo-blue text-white' 
+                  : 'bg-slate-50 text-slate-400'
+            }`}
+          >
+            <span>{date.getDate()}</span>
+            <span className="text-[7px] opacity-60 uppercase">{date.toLocaleString('ru', { month: 'short' }).replace('.', '')}</span>
           </div>
         );
       })}
@@ -1592,38 +1629,152 @@ function MiniCalendar({ events }: { events: Event[] }) {
   );
 }
 
-function ParticipantCardPublic({ onBack }: { onBack: () => void }) {
+function ParticipantCardPublic({ onBack, events }: { onBack: () => void, events: Event[] }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [telegram, setTelegram] = useState('');
+  const [whatsapp, setWhatsapp] = useState('');
+  const [maxNumber, setMaxNumber] = useState('');
+  const [city, setCity] = useState('');
   const [email, setEmail] = useState('');
-  const [interests, setInterests] = useState('');
-  const [status, setStatus] = useState<string | null>(null);
+  const [participantStatus, setParticipantStatus] = useState('Новый');
+  const [attendedEvents, setAttendedEvents] = useState('');
+  const [autoAttendedEvents, setAutoAttendedEvents] = useState<string[]>([]);
+  const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
+
+  useEffect(() => {
+    const fetchAttendance = async () => {
+      if (!email || !email.includes('@')) return;
+      
+      setIsSearching(true);
+      try {
+        // 1. Find user by email
+        const usersRef = collection(db, 'users');
+        const qUser = query(usersRef, where('email', '==', email));
+        onSnapshot(qUser, (snapshot) => {
+          if (!snapshot.empty) {
+            const userDoc = snapshot.docs[0];
+            const uid = userDoc.id;
+
+            // 2. Find registrations for this user
+            const regRef = collection(db, 'registrations');
+            const qReg = query(regRef, where('userId', '==', uid), where('status', '==', 'attended'));
+            
+            onSnapshot(qReg, (regSnapshot) => {
+              const attendedIds = regSnapshot.docs.map(d => d.data().eventId);
+              const attendedTitles = events
+                .filter(e => attendedIds.includes(e.id))
+                .map(e => e.title);
+              setAutoAttendedEvents(attendedTitles);
+              setIsSearching(false);
+            });
+          } else {
+            setAutoAttendedEvents([]);
+            setIsSearching(false);
+          }
+        });
+      } catch (error) {
+        console.error("Error fetching attendance:", error);
+        setIsSearching(false);
+      }
+    };
+
+    const timer = setTimeout(fetchAttendance, 1000);
+    return () => clearTimeout(timer);
+  }, [email, events]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setStatus('Сохранение...');
+    setSubmissionStatus('Сохранение...');
     try {
       await addDoc(collection(db, 'participants'), {
-        name, phone, email, interests,
+        name, phone, telegram, whatsapp, maxNumber, city, email,
+        participantStatus,
+        attendedEvents,
+        autoAttendedEvents,
         createdAt: serverTimestamp()
       });
-      setStatus('Карточка сохранена!');
+      setSubmissionStatus('Карточка сохранена!');
       setTimeout(onBack, 2000);
     } catch (error) {
-      setStatus('Ошибка');
+      setSubmissionStatus('Ошибка');
     }
   };
 
   return (
-    <div className="max-w-2xl mx-auto p-8">
-      <h2 className="text-4xl font-black mb-12">Карточка участника</h2>
-      <form onSubmit={handleSubmit} className="space-y-6 bg-white p-10 rounded-[40px] border border-slate-100 shadow-xl">
-        <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="ФИО" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
-        <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="Телефон" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
-        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
-        <textarea value={interests} onChange={e => setInterests(e.target.value)} placeholder="Интересы / Направления" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none min-h-[120px]" />
-        <button type="submit" className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest">
-          {status || "Отправить"}
+    <div className="p-8 md:p-12 max-h-[90vh] overflow-y-auto">
+      <h2 className="text-3xl font-black mb-8">Карточка участника</h2>
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <div className="space-y-4">
+          <label className="block">
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Основная информация</span>
+            <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="ФИО" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none mt-1" required />
+          </label>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="Телефон" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email (для поиска истории)" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Мессенджеры и доп. данные</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <input type="text" value={whatsapp} onChange={e => setWhatsapp(e.target.value)} placeholder="WhatsApp номер" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" />
+            <input type="text" value={telegram} onChange={e => setTelegram(e.target.value)} placeholder="Telegram nickname" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <input type="text" value={city} onChange={e => setCity(e.target.value)} placeholder="Город проживания" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" />
+            <input type="text" value={maxNumber} onChange={e => setMaxNumber(e.target.value)} placeholder="Макс. номер" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" />
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Статус в Академии</span>
+          <select 
+            value={participantStatus} 
+            onChange={e => setParticipantStatus(e.target.value)} 
+            className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none appearance-none"
+          >
+            <option value="Новый">Статус: Новый</option>
+            <option value="Постоянный">Статус: Постоянный</option>
+            <option value="Слушатель">Статус: Слушатель</option>
+            <option value="Студент">Статус: Студент</option>
+            <option value="Выпускник">Статус: Выпускник</option>
+          </select>
+        </div>
+
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">История посещений</span>
+            {isSearching && <span className="text-[10px] font-bold text-logo-blue animate-pulse">Поиск истории...</span>}
+          </div>
+          
+          {autoAttendedEvents.length > 0 && (
+            <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100">
+              <p className="text-[10px] font-black text-logo-blue uppercase mb-2">Найдено в системе:</p>
+              <ul className="space-y-1">
+                {autoAttendedEvents.map((title, i) => (
+                  <li key={i} className="text-xs font-bold text-slate-700 flex items-center gap-2">
+                    <div className="w-1 h-1 bg-logo-blue rounded-full" /> {title}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <textarea 
+            value={attendedEvents} 
+            onChange={e => setAttendedEvents(e.target.value)} 
+            placeholder="Другие мероприятия (которые вы посещали ранее или которых нет в списке выше)" 
+            className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none min-h-[100px]"
+          />
+        </div>
+
+        <button type="submit" className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-logo-blue transition-all active:scale-95">
+          {submissionStatus || "Сохранить карточку"}
         </button>
       </form>
     </div>
