@@ -122,7 +122,7 @@ function getEventDate(startTime: any): Date {
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [view, setView] = useState<'schedule' | 'admin' | 'profile'>('schedule');
+  const [view, setView] = useState<'schedule' | 'admin' | 'profile' | 'event-input' | 'participant-card'>('schedule');
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -593,6 +593,35 @@ export default function App() {
         {/* --- SIDEBAR --- */}
         <aside className="w-[280px] bg-white border-r border-slate-200 p-8 flex flex-col gap-8 overflow-y-auto scrollbar-hide hidden lg:flex">
           <div className="space-y-6">
+            <div className="space-y-2 mb-8">
+              <SidebarItem 
+                icon={<Calendar size={18} />} 
+                label="Расписание" 
+                active={view === 'schedule'} 
+                onClick={() => setView('schedule')} 
+              />
+              <SidebarItem 
+                icon={<Plus size={18} />} 
+                label="Ввод мероприятия" 
+                active={view === 'event-input'} 
+                onClick={() => setView('event-input')} 
+              />
+              <SidebarItem 
+                icon={<User size={18} />} 
+                label="Карточка участника" 
+                active={view === 'participant-card'} 
+                onClick={() => setView('participant-card')} 
+              />
+              {profile?.role === 'admin' && (
+                <SidebarItem 
+                  icon={<Settings size={18} />} 
+                  label="Админ-панель" 
+                  active={view === 'admin'} 
+                  onClick={() => setView('admin')} 
+                />
+              )}
+            </div>
+
             <div>
               <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Период</h4>
               <div className="space-y-1">
@@ -827,7 +856,7 @@ export default function App() {
         </main>
       </div>
 
-      {/* Admin/Profile Overlays */}
+      {/* Admin/Profile/Public Overlays */}
       <AnimatePresence>
         {view === 'admin' && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white p-12 overflow-y-auto">
@@ -839,6 +868,18 @@ export default function App() {
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white p-12 overflow-y-auto flex items-center justify-center">
             <button onClick={() => setView('schedule')} className="absolute top-8 right-8 p-2 hover:bg-slate-100 rounded-xl transition-colors"><X size={24} /></button>
             <UserProfileView user={user!} profile={profile} />
+          </motion.div>
+        )}
+        {view === 'event-input' && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white p-12 overflow-y-auto">
+            <button onClick={() => setView('schedule')} className="absolute top-8 right-8 p-2 hover:bg-slate-100 rounded-xl transition-colors"><X size={24} /></button>
+            <EventInputPublic events={events} onBack={() => setView('schedule')} />
+          </motion.div>
+        )}
+        {view === 'participant-card' && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white p-12 overflow-y-auto">
+            <button onClick={() => setView('schedule')} className="absolute top-8 right-8 p-2 hover:bg-slate-100 rounded-xl transition-colors"><X size={24} /></button>
+            <ParticipantCardPublic onBack={() => setView('schedule')} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -1278,5 +1319,157 @@ function SidebarItem({ icon, label, active, onClick }: { icon: any, label: strin
       {icon}
       {label}
     </button>
+  );
+}
+
+// --- New Public Components ---
+
+function EventInputPublic({ events, onBack }: { events: Event[], onBack: () => void }) {
+  const [title, setTitle] = useState('');
+  const [speakerName, setSpeakerName] = useState('');
+  const [location, setLocation] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [duration, setDuration] = useState(2);
+  const [status, setStatus] = useState<string | null>(null);
+  const [conflicts, setConflicts] = useState<Event[]>([]);
+
+  const checkConflicts = (newStart: Date, newEnd: Date) => {
+    return events.filter(event => {
+      const eventStart = getEventDate(event.startTime);
+      const eventEnd = event.endTime ? getEventDate(event.endTime) : new Date(eventStart.getTime() + 2 * 60 * 60 * 1000);
+      const overlaps = (newStart < eventEnd && newEnd > eventStart);
+      return overlaps && (event.location.toLowerCase() === location.toLowerCase() && location.toLowerCase() !== 'онлайн');
+    });
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    const start = new Date(startTime);
+    const end = new Date(start.getTime() + duration * 60 * 60 * 1000);
+    
+    const foundConflicts = checkConflicts(start, end);
+    if (foundConflicts.length > 0 && conflicts.length === 0) {
+      setConflicts(foundConflicts);
+      return;
+    }
+
+    setStatus('Сохранение...');
+    try {
+      await addDoc(collection(db, 'events'), {
+        title,
+        speakerName,
+        location,
+        startTime: start,
+        endTime: end,
+        category: 'Семинар',
+        price: 0,
+        maxParticipants: 50,
+        registeredCount: 0,
+        status: 'planned',
+        createdAt: serverTimestamp()
+      });
+      setStatus('Событие добавлено!');
+      setTimeout(onBack, 2000);
+    } catch (error) {
+      setStatus('Ошибка при сохранении');
+    }
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto p-8">
+      <h2 className="text-4xl font-black mb-12">Ввод мероприятия</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_350px] gap-12">
+        <form onSubmit={handleSubmit} className="space-y-6 bg-white p-10 rounded-[40px] border border-slate-100 shadow-xl">
+          <div className="space-y-4">
+            <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Название события" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
+            <input type="text" value={speakerName} onChange={e => setSpeakerName(e.target.value)} placeholder="Спикер" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
+            <input type="text" value={location} onChange={e => setLocation(e.target.value)} placeholder="Локация" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
+            <input type="datetime-local" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
+          </div>
+
+          {conflicts.length > 0 && (
+            <div className="p-4 bg-red-50 text-red-600 rounded-2xl text-xs font-bold">
+              ⚠️ Обнаружен конфликт времени! В этом месте уже есть событие.
+            </div>
+          )}
+
+          <button type="submit" className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest">
+            {status || "Сохранить"}
+          </button>
+        </form>
+
+        <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-xl">
+          <h4 className="text-sm font-black uppercase tracking-widest text-slate-400 mb-6">Календарь занятости</h4>
+          <MiniCalendar events={events} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MiniCalendar({ events }: { events: Event[] }) {
+  const now = new Date();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).getDay();
+  
+  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+  const blanks = Array.from({ length: (firstDay + 6) % 7 }, (_, i) => i);
+
+  return (
+    <div className="grid grid-cols-7 gap-2">
+      {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(d => (
+        <div key={d} className="text-[10px] font-black text-slate-300 text-center">{d}</div>
+      ))}
+      {blanks.map(b => <div key={`b-${b}`} />)}
+      {days.map(d => {
+        const hasEvent = events.some(e => {
+          const ed = getEventDate(e.startTime);
+          return ed.getDate() === d && ed.getMonth() === now.getMonth() && ed.getFullYear() === now.getFullYear();
+        });
+        return (
+          <div key={d} className={`aspect-square flex items-center justify-center rounded-lg text-xs font-bold ${hasEvent ? 'bg-logo-orange text-white' : 'bg-slate-50 text-slate-400'}`}>
+            {d}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ParticipantCardPublic({ onBack }: { onBack: () => void }) {
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [interests, setInterests] = useState('');
+  const [status, setStatus] = useState<string | null>(null);
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setStatus('Сохранение...');
+    try {
+      await addDoc(collection(db, 'participants'), {
+        name, phone, email, interests,
+        createdAt: serverTimestamp()
+      });
+      setStatus('Карточка сохранена!');
+      setTimeout(onBack, 2000);
+    } catch (error) {
+      setStatus('Ошибка');
+    }
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto p-8">
+      <h2 className="text-4xl font-black mb-12">Карточка участника</h2>
+      <form onSubmit={handleSubmit} className="space-y-6 bg-white p-10 rounded-[40px] border border-slate-100 shadow-xl">
+        <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="ФИО" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
+        <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="Телефон" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
+        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none" required />
+        <textarea value={interests} onChange={e => setInterests(e.target.value)} placeholder="Интересы / Направления" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none min-h-[120px]" />
+        <button type="submit" className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest">
+          {status || "Отправить"}
+        </button>
+      </form>
+    </div>
   );
 }
