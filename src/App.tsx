@@ -12,6 +12,9 @@ import {
   Users, 
   TrendingUp, 
   Wallet,
+  ArrowUpRight,
+  ArrowDownRight,
+  DollarSign,
   LayoutDashboard,
   Settings,
   Search,
@@ -76,6 +79,7 @@ interface Event {
   id: string;
   title: string;
   speakerName: string;
+  speakerId?: string;
   location: string;
   branch: string;
   startTime: any;
@@ -91,6 +95,41 @@ interface Event {
   format?: 'Онлайн' | 'Оффлайн';
   sessionsCount?: number;
   sessionDates?: any[];
+  status?: 'planned' | 'active' | 'completed' | 'cancelled';
+  baseExpenses?: {
+    rent: number;
+    speakerFee: number;
+    marketing: number;
+    other: number;
+  };
+  totalRevenue?: number;
+  totalExpenses?: number;
+  netProfit?: number;
+}
+
+interface Registration {
+  id: string;
+  userId: string;
+  eventId: string;
+  status: 'registered' | 'attended' | 'cancelled';
+  paid: boolean;
+  totalPrice: number;
+  amountPaid: number;
+  paymentStatus: 'unpaid' | 'partial' | 'paid';
+  registrationDate: any;
+}
+
+interface FinanceRecord {
+  id: string;
+  type: 'income' | 'expense';
+  amount: number;
+  category: string;
+  eventId?: string;
+  userId?: string;
+  branch?: string;
+  managerId?: string;
+  description?: string;
+  date: any;
 }
 
 interface UserProfile {
@@ -130,6 +169,8 @@ export default function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [view, setView] = useState<'schedule' | 'admin' | 'profile' | 'event-input' | 'participant-card' | 'blog-rules'>('schedule');
   const [events, setEvents] = useState<Event[]>([]);
+  const [financeRecords, setFinanceRecords] = useState<FinanceRecord[]>([]);
+  const [participantsCount, setParticipantsCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [calendarView, setCalendarView] = useState<'List' | 'Calendar'>('List');
@@ -231,6 +272,39 @@ export default function App() {
       return unsubscribe;
     } catch (err) {
       setGlobalError(`Критическая ошибка: ${err instanceof Error ? err.message : String(err)}`);
+      return () => {};
+    }
+  }, []);
+
+  // Firestore Listener for Finance
+  useEffect(() => {
+    try {
+      const q = query(collection(db, 'finance'), orderBy('date', 'desc'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FinanceRecord));
+        setFinanceRecords(records);
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'finance');
+      });
+      return unsubscribe;
+    } catch (err) {
+      logger.log('Finance Listener Error', err);
+      return () => {};
+    }
+  }, []);
+
+  // Firestore Listener for Participants Count
+  useEffect(() => {
+    try {
+      const q = query(collection(db, 'participants'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        setParticipantsCount(snapshot.size);
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'participants');
+      });
+      return unsubscribe;
+    } catch (err) {
+      logger.log('Participants Listener Error', err);
       return () => {};
     }
   }, []);
@@ -449,7 +523,9 @@ export default function App() {
         eventId: event.id,
         status: 'registered',
         paid: (event.price || 0) > 0,
+        totalPrice: event.price || 0,
         amountPaid: event.price || 0,
+        paymentStatus: 'paid',
         registrationDate: serverTimestamp()
       });
 
@@ -873,7 +949,7 @@ export default function App() {
         {view === 'admin' && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white p-12 overflow-y-auto">
             <button onClick={() => setView('schedule')} className="absolute top-8 right-8 p-2 hover:bg-slate-100 rounded-xl transition-colors"><X size={24} /></button>
-            <AdminPanel onBack={() => setView('schedule')} events={events} />
+            <AdminPanel onBack={() => setView('schedule')} events={events} financeRecords={financeRecords} participantsCount={participantsCount} />
           </motion.div>
         )}
         {view === 'profile' && (
@@ -1042,7 +1118,8 @@ function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
   );
 }
 
-function AdminPanel({ onBack, events }: { onBack: () => void, events: Event[] }) {
+function AdminPanel({ onBack, events, financeRecords, participantsCount }: { onBack: () => void, events: Event[], financeRecords: FinanceRecord[], participantsCount: number }) {
+  const [subView, setSubView] = useState<'events' | 'finance'>('events');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [speakerName, setSpeakerName] = useState('');
@@ -1055,6 +1132,8 @@ function AdminPanel({ onBack, events }: { onBack: () => void, events: Event[] })
   const [price, setPrice] = useState(0);
   const [discounts, setDiscounts] = useState('');
   const [access, setAccess] = useState('');
+  const [rentExpense, setRentExpense] = useState(0);
+  const [speakerFee, setSpeakerFee] = useState(0);
   const [format, setFormat] = useState<'Онлайн' | 'Оффлайн'>('Оффлайн');
   const [maxParticipants, setMaxParticipants] = useState(50);
   const [isListening, setIsListening] = useState(false);
@@ -1135,6 +1214,15 @@ function AdminPanel({ onBack, events }: { onBack: () => void, events: Event[] })
         format,
         maxParticipants: Number(maxParticipants),
         registeredCount: 0,
+        baseExpenses: {
+          rent: Number(rentExpense),
+          speakerFee: Number(speakerFee),
+          marketing: 0,
+          other: 0
+        },
+        totalRevenue: 0,
+        totalExpenses: Number(rentExpense) + Number(speakerFee),
+        netProfit: -(Number(rentExpense) + Number(speakerFee)),
         status: 'planned',
         createdAt: serverTimestamp()
       });
@@ -1155,14 +1243,38 @@ function AdminPanel({ onBack, events }: { onBack: () => void, events: Event[] })
 
   return (
     <div className="max-w-4xl mx-auto p-8">
-      <div className="flex items-center justify-between mb-12">
-        <h2 className="text-4xl font-black tracking-tight">Панель администратора</h2>
+      <div className="flex items-center justify-between mb-8">
+        <h2 className="text-4xl font-black tracking-tight">Управление системой</h2>
         <button onClick={onBack} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors">
           <X size={24} />
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-12">
+      <div className="flex gap-4 mb-12">
+        <button 
+          onClick={() => setSubView('events')}
+          className={`px-6 py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all ${
+            subView === 'events' 
+              ? 'bg-slate-900 text-white shadow-lg shadow-slate-200' 
+              : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
+          }`}
+        >
+          Мероприятия
+        </button>
+        <button 
+          onClick={() => setSubView('finance')}
+          className={`px-6 py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all ${
+            subView === 'finance' 
+              ? 'bg-slate-900 text-white shadow-lg shadow-slate-200' 
+              : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
+          }`}
+        >
+          Финансы
+        </button>
+      </div>
+
+      {subView === 'events' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-12">
         <div className="bg-white rounded-[40px] p-10 border border-slate-100 shadow-2xl shadow-slate-200/50">
           <h3 className="text-2xl font-black mb-8 flex items-center gap-3">
             <Plus className="text-logo-blue" /> Новое событие
@@ -1326,6 +1438,29 @@ function AdminPanel({ onBack, events }: { onBack: () => void, events: Event[] })
               </div>
             </div>
 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Аренда (₽)</label>
+                <input 
+                  type="number"
+                  value={rentExpense}
+                  onChange={(e) => setRentExpense(Number(e.target.value))}
+                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
+                  min="0"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Гонорар спикера (₽)</label>
+                <input 
+                  type="number"
+                  value={speakerFee}
+                  onChange={(e) => setSpeakerFee(Number(e.target.value))}
+                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
+                  min="0"
+                />
+              </div>
+            </div>
+
             <div className="space-y-2">
               <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Описание</label>
               <textarea 
@@ -1378,11 +1513,209 @@ function AdminPanel({ onBack, events }: { onBack: () => void, events: Event[] })
           <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50">
             <h4 className="text-lg font-black mb-6">Статистика</h4>
             <div className="space-y-4">
-              <StatCard label="Всего участников" value="1,240" trend="+12%" />
-              <StatCard label="Выручка" value="450,000 ₽" trend="+8%" />
-              <StatCard label="Активные события" value="8" />
+              <StatCard label="Всего участников" value={participantsCount.toLocaleString()} />
+              <StatCard label="Выручка" value={`${financeRecords.filter(r => r.type === 'income').reduce((sum, r) => sum + r.amount, 0).toLocaleString()} ₽`} />
+              <StatCard label="Активные события" value={events.filter(e => e.status !== 'completed' && e.status !== 'cancelled').length.toString()} />
             </div>
           </div>
+        </div>
+      </div>
+    ) : (
+      <FinanceView events={events} records={financeRecords} />
+    )}
+  </div>
+  );
+}
+
+function FinanceView({ events, records }: { events: Event[], records: FinanceRecord[] }) {
+  const [type, setType] = useState<'income' | 'expense'>('expense');
+  const [amount, setAmount] = useState('');
+  const [category, setCategory] = useState('Аренда');
+  const [eventId, setEventId] = useState('');
+  const [description, setDescription] = useState('');
+  const [status, setStatus] = useState<string | null>(null);
+
+  const totalIncome = records.filter(r => r.type === 'income').reduce((sum, r) => sum + r.amount, 0);
+  const totalExpense = records.filter(r => r.type === 'expense').reduce((sum, r) => sum + r.amount, 0);
+  const netProfit = totalIncome - totalExpense;
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setStatus('Сохранение...');
+    try {
+      await addDoc(collection(db, 'finance'), {
+        type,
+        amount: Number(amount),
+        category,
+        eventId: eventId || null,
+        description,
+        date: serverTimestamp(),
+        branch: 'Екатеринбург', // Default for now
+        managerId: auth.currentUser?.uid
+      });
+      setStatus('Запись добавлена!');
+      setAmount('');
+      setDescription('');
+      setTimeout(() => setStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'finance');
+      setStatus('Ошибка');
+    }
+  };
+
+  return (
+    <div className="space-y-12">
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50">
+          <div className="flex items-center gap-3 text-green-500 mb-4">
+            <ArrowUpRight size={24} />
+            <span className="text-xs font-black uppercase tracking-widest">Доходы</span>
+          </div>
+          <p className="text-3xl font-black">{totalIncome.toLocaleString()} ₽</p>
+        </div>
+        <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50">
+          <div className="flex items-center gap-3 text-red-500 mb-4">
+            <ArrowDownRight size={24} />
+            <span className="text-xs font-black uppercase tracking-widest">Расходы</span>
+          </div>
+          <p className="text-3xl font-black">{totalExpense.toLocaleString()} ₽</p>
+        </div>
+        <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50">
+          <div className="flex items-center gap-3 text-logo-blue mb-4">
+            <TrendingUp size={24} />
+            <span className="text-xs font-black uppercase tracking-widest">Чистая прибыль</span>
+          </div>
+          <p className="text-3xl font-black">{netProfit.toLocaleString()} ₽</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_350px] gap-12">
+        {/* Records List */}
+        <div className="bg-white rounded-[40px] p-10 border border-slate-100 shadow-2xl shadow-slate-200/50">
+          <h3 className="text-2xl font-black mb-8">История операций</h3>
+          <div className="space-y-4">
+            {records.length === 0 ? (
+              <div className="text-center py-12 text-slate-400 font-bold">Записей пока нет</div>
+            ) : records.map(record => (
+              <div key={record.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <div className="flex items-center gap-4">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${record.type === 'income' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                    {record.type === 'income' ? <ArrowUpRight size={20} /> : <ArrowDownRight size={20} />}
+                  </div>
+                  <div>
+                    <p className="font-bold text-sm">{record.category}</p>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                      {record.eventId ? events.find(e => e.id === record.eventId)?.title : 'Общие расходы'}
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className={`font-black ${record.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
+                    {record.type === 'income' ? '+' : '-'}{record.amount.toLocaleString()} ₽
+                  </p>
+                  <p className="text-[10px] text-slate-400 font-bold">
+                    {record.date?.toDate ? record.date.toDate().toLocaleDateString() : '...'}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Add Record Form */}
+        <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 h-fit sticky top-8">
+          <h4 className="text-lg font-black mb-6 flex items-center gap-2">
+            <Plus size={20} className="text-logo-blue" /> Новая запись
+          </h4>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="flex bg-slate-100 p-1 rounded-2xl">
+              <button 
+                type="button"
+                onClick={() => setType('expense')}
+                className={`flex-1 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${type === 'expense' ? 'bg-white text-red-500 shadow-sm' : 'text-slate-400'}`}
+              >
+                Расход
+              </button>
+              <button 
+                type="button"
+                onClick={() => setType('income')}
+                className={`flex-1 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${type === 'income' ? 'bg-white text-green-500 shadow-sm' : 'text-slate-400'}`}
+              >
+                Доход
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Сумма (₽)</label>
+              <input 
+                type="number"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
+                placeholder="0.00"
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Категория</label>
+              <select 
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all appearance-none cursor-pointer"
+              >
+                {type === 'expense' ? (
+                  <>
+                    <option value="Аренда">Аренда</option>
+                    <option value="Гонорар спикера">Гонорар спикера</option>
+                    <option value="Маркетинг">Маркетинг</option>
+                    <option value="Налоги">Налоги</option>
+                    <option value="Хоз. расходы">Хоз. расходы</option>
+                    <option value="Другое">Другое</option>
+                  </>
+                ) : (
+                  <>
+                    <option value="Оплата участия">Оплата участия</option>
+                    <option value="Донат">Донат</option>
+                    <option value="Спонсорство">Спонсорство</option>
+                    <option value="Другое">Другое</option>
+                  </>
+                )}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Событие (опционально)</label>
+              <select 
+                value={eventId}
+                onChange={(e) => setEventId(e.target.value)}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all appearance-none cursor-pointer"
+              >
+                <option value="">Общие / Не указано</option>
+                {events.map(e => <option key={e.id} value={e.id}>{e.title}</option>)}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Комментарий</label>
+              <textarea 
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all min-h-[80px]"
+                placeholder="Детали операции..."
+              />
+            </div>
+
+            <button 
+              type="submit"
+              className={`w-full py-4 rounded-xl font-black uppercase tracking-widest transition-all shadow-lg ${
+                type === 'income' ? 'bg-green-600 hover:bg-green-700 shadow-green-100' : 'bg-red-600 hover:bg-red-700 shadow-red-100'
+              } text-white`}
+            >
+              {status || "Добавить запись"}
+            </button>
+          </form>
         </div>
       </div>
     </div>

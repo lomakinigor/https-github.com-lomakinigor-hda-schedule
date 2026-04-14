@@ -33,6 +33,18 @@
         "maxParticipants": { "type": "number", "description": "Maximum capacity." },
         "registeredCount": { "type": "number", "description": "Number of people registered." },
         "status": { "type": "string", "enum": ["planned", "active", "completed", "cancelled"] },
+        "baseExpenses": { 
+          "type": "object", 
+          "properties": {
+            "rent": { "type": "number" },
+            "speakerFee": { "type": "number" },
+            "marketing": { "type": "number" },
+            "other": { "type": "number" }
+          }
+        },
+        "totalRevenue": { "type": "number" },
+        "totalExpenses": { "type": "number" },
+        "netProfit": { "type": "number" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["title", "speakerId", "startTime", "endTime", "location"]
@@ -46,7 +58,9 @@
         "eventId": { "type": "string", "description": "ID of the event." },
         "status": { "type": "string", "enum": ["registered", "attended", "cancelled"] },
         "paid": { "type": "boolean", "description": "Whether the event was paid." },
+        "totalPrice": { "type": "number", "description": "Price at the time of registration." },
         "amountPaid": { "type": "number", "description": "Amount paid." },
+        "paymentStatus": { "type": "string", "enum": ["unpaid", "partial", "paid"] },
         "registrationDate": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "eventId", "status"]
@@ -61,6 +75,8 @@
         "category": { "type": "string", "description": "e.g., 'rent', 'speaker_fee', 'registration_fee'" },
         "eventId": { "type": "string", "description": "Related event ID (optional)." },
         "userId": { "type": "string", "description": "Related user ID (optional)." },
+        "branch": { "type": "string", "description": "Branch name." },
+        "managerId": { "type": "string", "description": "UID of the manager who recorded this." },
         "description": { "type": "string" },
         "date": { "type": "string", "format": "date-time" }
       },
