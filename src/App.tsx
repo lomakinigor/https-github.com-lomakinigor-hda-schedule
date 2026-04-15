@@ -33,6 +33,7 @@ import {
   Settings,
   Search,
   X,
+  Menu as MenuIcon,
   ChevronDown,
   AlertCircle,
   Copy,
@@ -263,6 +264,7 @@ function AppContent() {
   const [loading, setLoading] = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [calendarView, setCalendarView] = useState<'List' | 'Calendar'>('List');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Filter States
   const [filterTitle, setFilterTitle] = useState('');
@@ -724,11 +726,18 @@ function AppContent() {
   return (
     <div className="min-h-screen bg-[#F8F9FB] font-sans text-slate-950 flex flex-col">
       {/* --- HEADER --- */}
-      <header className="bg-white/80 backdrop-blur-xl border-b border-slate-200/60 px-[5%] py-4 flex items-center justify-between sticky top-0 z-[100] shadow-sm">
-        <div className="flex items-center gap-4">
-          <Logo className="w-14 h-14" />
-          <h1 className="text-3xl md:text-5xl font-black uppercase tracking-tighter text-orange-500 leading-none">
-            Академия Развития Человека
+      <header className="bg-white/80 backdrop-blur-xl border-b border-slate-200/60 px-4 md:px-[5%] py-3 md:py-4 flex items-center justify-between sticky top-0 z-[100] shadow-sm">
+        <div className="flex items-center gap-2 md:gap-4">
+          <button 
+            onClick={() => setIsMobileMenuOpen(true)}
+            className="lg:hidden p-2 hover:bg-slate-100 rounded-xl transition-colors text-slate-600"
+          >
+            <MenuIcon size={24} />
+          </button>
+          <Logo className="w-10 h-10 md:w-14 md:h-14" />
+          <h1 className="text-xl md:text-5xl font-black uppercase tracking-tighter text-orange-500 leading-none">
+            <span className="hidden sm:inline">Академия Развития Человека</span>
+            <span className="sm:hidden">АРЧ</span>
           </h1>
         </div>
         
@@ -761,189 +770,43 @@ function AppContent() {
       </header>
 
       <div className="flex-1 flex max-w-[1600px] mx-auto w-full overflow-hidden">
-        {/* --- SIDEBAR --- */}
+        {/* --- SIDEBAR (Desktop) --- */}
         <aside className="w-[280px] bg-white border-r border-slate-200 p-8 flex flex-col gap-8 overflow-y-auto scrollbar-hide hidden lg:flex">
-          <div className="space-y-6">
-            <div className="space-y-2 mb-8">
-              <SidebarItem 
-                icon={<Calendar size={18} />} 
-                label="Расписание" 
-                active={view === 'schedule'} 
-                onClick={() => setView('schedule')} 
-              />
-              <SidebarItem 
-                icon={<Plus size={18} />} 
-                label="Ввод мероприятия" 
-                active={view === 'event-input'} 
-                onClick={() => setView('event-input')} 
-              />
-              <SidebarItem 
-                icon={<User size={18} />} 
-                label="Карточка участника" 
-                active={view === 'participant-card'} 
-                onClick={() => setView('participant-card')} 
-              />
-              <SidebarItem 
-                icon={<BookOpen size={18} />} 
-                label="Правила блога" 
-                active={view === 'blog-rules'} 
-                onClick={() => setView('blog-rules')} 
-              />
-              {profile?.role === 'admin' && (
-                <SidebarItem 
-                  icon={<Settings size={18} />} 
-                  label="Управление системой" 
-                  active={view === 'admin'} 
-                  onClick={() => setView('admin')} 
-                />
-              )}
-            </div>
-
-            <div>
-              <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Период</h4>
-              <div className="space-y-1">
-                {PERIODS.map(p => (
-                  <button 
-                    key={p}
-                    onClick={() => setFilterPeriod(p)}
-                    className={`w-full text-left px-4 py-2 rounded-xl text-sm font-bold transition-all ${filterPeriod === p ? 'bg-slate-100 text-logo-blue border border-slate-200' : 'text-slate-600 hover:bg-slate-50'}`}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Направления</h4>
-              <div className="space-y-1">
-                {CATEGORIES.map(c => (
-                  <button 
-                    key={c}
-                    onClick={() => setFilterCategory(c)}
-                    className={`w-full text-left px-4 py-2 rounded-xl text-sm font-bold transition-all ${filterCategory === c ? 'bg-slate-100 text-logo-blue border border-slate-200' : 'text-slate-600 hover:bg-slate-50'}`}
-                  >
-                    {c}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-slate-100 space-y-6">
-              <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Доп. фильтры</h4>
-              
-              <div className="space-y-1">
-                <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Название события</label>
-                <div className="relative">
-                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
-                  <input 
-                    type="text"
-                    placeholder="Поиск..."
-                    value={filterTitle}
-                    onChange={(e) => setFilterTitle(e.target.value)}
-                    className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 ring-logo-blue outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Спикер</label>
-                <input 
-                  type="text"
-                  placeholder="Фамилия..."
-                  value={filterSpeaker}
-                  onChange={(e) => setFilterSpeaker(e.target.value)}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 ring-logo-blue outline-none"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Филиал</label>
-                <select 
-                  value={filterBranch}
-                  onChange={(e) => setFilterBranch(e.target.value)}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 ring-logo-blue outline-none appearance-none cursor-pointer"
-                >
-                  {BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Локация</label>
-                <input 
-                  type="text"
-                  placeholder="Место..."
-                  value={filterLocation}
-                  onChange={(e) => setFilterLocation(e.target.value)}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 ring-logo-blue outline-none"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Диапазон дат</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <input 
-                    type="date"
-                    value={filterDateFrom}
-                    onChange={(e) => setFilterDateFrom(e.target.value)}
-                    className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold focus:ring-2 ring-logo-blue outline-none"
-                    placeholder="От"
-                  />
-                  <input 
-                    type="date"
-                    value={filterDateTo}
-                    onChange={(e) => setFilterDateTo(e.target.value)}
-                    className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold focus:ring-2 ring-logo-blue outline-none"
-                    placeholder="До"
-                  />
-                </div>
-              </div>
-
-              {(filterTitle || filterSpeaker || filterDateFrom || filterDateTo || filterLocation || filterBranch !== 'Все филиалы') && (
-                <button 
-                  onClick={() => {
-                    setFilterTitle('');
-                    setFilterSpeaker('');
-                    setFilterDateFrom('');
-                    setFilterDateTo('');
-                    setFilterLocation('');
-                    setFilterBranch('Все филиалы');
-                  }}
-                  className="w-full py-2 text-[10px] font-black text-red-500 bg-red-50 rounded-xl hover:bg-red-100 transition-colors"
-                >
-                  Сбросить всё
-                </button>
-              )}
-
-              <div className="mt-4 pt-4 border-t border-slate-100">
-                <div className="text-[10px] text-slate-400 uppercase font-bold mb-2">Отладка</div>
-                <div className="text-xs text-slate-600">Всего событий в БД: {events.length}</div>
-                <button 
-                  onClick={seedMockData}
-                  disabled={seedStatus !== null}
-                  className="w-full mt-2 py-2 text-[10px] font-black text-logo-blue bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  <Plus size={12} />
-                  {seedStatus || "ДОБАВИТЬ ТЕСТОВЫЕ ДАННЫЕ"}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <button 
-            onClick={() => setView('profile')}
-            className="mt-auto w-full bg-slate-900 text-white py-4 rounded-2xl font-bold text-xs hover:bg-slate-800 transition-all shadow-lg shadow-slate-200"
-          >
-            Личный кабинет
-          </button>
+          <SidebarContent 
+            view={view} 
+            setView={setView} 
+            profile={profile} 
+            PERIODS={PERIODS} 
+            filterPeriod={filterPeriod} 
+            setFilterPeriod={setFilterPeriod}
+            CATEGORIES={CATEGORIES}
+            filterCategory={filterCategory}
+            setFilterCategory={setFilterCategory}
+            filterTitle={filterTitle}
+            setFilterTitle={setFilterTitle}
+            filterSpeaker={filterSpeaker}
+            setFilterSpeaker={setFilterSpeaker}
+            filterBranch={filterBranch}
+            setFilterBranch={setFilterBranch}
+            BRANCHES={BRANCHES}
+            filterLocation={filterLocation}
+            setFilterLocation={setFilterLocation}
+            filterDateFrom={filterDateFrom}
+            setFilterDateFrom={setFilterDateFrom}
+            filterDateTo={filterDateTo}
+            setFilterDateTo={setFilterDateTo}
+            events={events}
+            seedMockData={seedMockData}
+            seedStatus={seedStatus}
+          />
         </aside>
 
         {/* --- MAIN CONTENT --- */}
-        <main className="flex-1 flex flex-col overflow-hidden p-8 md:p-12">
-          <div className="flex items-end justify-between mb-8">
-            <h2 className="text-4xl font-black tracking-tight">Расписание</h2>
+        <main className="flex-1 flex flex-col overflow-hidden p-6 md:p-12">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
+            <h2 className="text-3xl md:text-4xl font-black tracking-tight">Расписание</h2>
             
-            <div className="flex bg-slate-200 p-1 rounded-2xl">
+            <div className="flex bg-slate-200 p-1 rounded-2xl self-start md:self-auto">
               {['List', 'Calendar'].map((v) => (
                 <button 
                   key={v}
@@ -1036,20 +899,20 @@ function AppContent() {
       {/* Admin/Profile/Public Overlays */}
       <AnimatePresence>
         {view === 'admin' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white p-12 overflow-y-auto">
-            <button onClick={() => setView('schedule')} className="absolute top-8 right-8 p-2 hover:bg-slate-100 rounded-xl transition-colors"><X size={24} /></button>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white p-4 md:p-12 overflow-y-auto">
+            <button onClick={() => setView('schedule')} className="absolute top-4 right-4 md:top-8 md:right-8 p-3 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors z-10"><X size={24} /></button>
             <AdminPanel onBack={() => setView('schedule')} events={events} financeRecords={financeRecords} participantsCount={participantsCount} />
           </motion.div>
         )}
         {view === 'profile' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white p-12 overflow-y-auto flex items-center justify-center">
-            <button onClick={() => setView('schedule')} className="absolute top-8 right-8 p-2 hover:bg-slate-100 rounded-xl transition-colors"><X size={24} /></button>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white p-4 md:p-12 overflow-y-auto flex items-center justify-center">
+            <button onClick={() => setView('schedule')} className="absolute top-4 right-4 md:top-8 md:right-8 p-3 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors z-10"><X size={24} /></button>
             <UserProfileView user={user!} profile={profile} />
           </motion.div>
         )}
         {view === 'event-input' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white p-12 overflow-y-auto">
-            <button onClick={() => setView('schedule')} className="absolute top-8 right-8 p-2 hover:bg-slate-100 rounded-xl transition-colors"><X size={24} /></button>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white p-4 md:p-12 overflow-y-auto">
+            <button onClick={() => setView('schedule')} className="absolute top-4 right-4 md:top-8 md:right-8 p-3 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors z-10"><X size={24} /></button>
             <EventInputPublic events={events} onBack={() => setView('schedule')} />
           </motion.div>
         )}
@@ -1099,12 +962,261 @@ function AppContent() {
             </motion.div>
           </motion.div>
         )}
+
+        {/* --- MOBILE MENU OVERLAY --- */}
+        {isMobileMenuOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }} 
+            className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-md lg:hidden"
+          >
+            <motion.div 
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="w-[85%] max-w-[320px] h-full bg-white p-6 flex flex-col shadow-2xl"
+            >
+              <div className="flex items-center justify-between mb-8">
+                <Logo className="w-10 h-10" />
+                <button 
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="p-2 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto scrollbar-hide">
+                <SidebarContent 
+                  view={view} 
+                  setView={(v) => {
+                    setView(v);
+                    setIsMobileMenuOpen(false);
+                  }} 
+                  profile={profile} 
+                  PERIODS={PERIODS} 
+                  filterPeriod={filterPeriod} 
+                  setFilterPeriod={setFilterPeriod}
+                  CATEGORIES={CATEGORIES}
+                  filterCategory={filterCategory}
+                  setFilterCategory={setFilterCategory}
+                  filterTitle={filterTitle}
+                  setFilterTitle={setFilterTitle}
+                  filterSpeaker={filterSpeaker}
+                  setFilterSpeaker={setFilterSpeaker}
+                  filterBranch={filterBranch}
+                  setFilterBranch={setFilterBranch}
+                  BRANCHES={BRANCHES}
+                  filterLocation={filterLocation}
+                  setFilterLocation={setFilterLocation}
+                  filterDateFrom={filterDateFrom}
+                  setFilterDateFrom={setFilterDateFrom}
+                  filterDateTo={filterDateTo}
+                  setFilterDateTo={setFilterDateTo}
+                  events={events}
+                  seedMockData={seedMockData}
+                  seedStatus={seedStatus}
+                />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   );
 }
 
 // --- Sub-components ---
+
+function SidebarContent({ 
+  view, setView, profile, PERIODS, filterPeriod, setFilterPeriod,
+  CATEGORIES, filterCategory, setFilterCategory,
+  filterTitle, setFilterTitle, filterSpeaker, setFilterSpeaker,
+  filterBranch, setFilterBranch, BRANCHES,
+  filterLocation, setFilterLocation,
+  filterDateFrom, setFilterDateFrom, filterDateTo, setFilterDateTo,
+  events, seedMockData, seedStatus
+}: any) {
+  return (
+    <div className="flex flex-col h-full gap-8">
+      <div className="space-y-6">
+        <div className="space-y-2 mb-8">
+          <SidebarItem 
+            icon={<Calendar size={18} />} 
+            label="Расписание" 
+            active={view === 'schedule'} 
+            onClick={() => setView('schedule')} 
+          />
+          <SidebarItem 
+            icon={<Plus size={18} />} 
+            label="Ввод мероприятия" 
+            active={view === 'event-input'} 
+            onClick={() => setView('event-input')} 
+          />
+          <SidebarItem 
+            icon={<User size={18} />} 
+            label="Карточка участника" 
+            active={view === 'participant-card'} 
+            onClick={() => setView('participant-card')} 
+          />
+          <SidebarItem 
+            icon={<BookOpen size={18} />} 
+            label="Правила блога" 
+            active={view === 'blog-rules'} 
+            onClick={() => setView('blog-rules')} 
+          />
+          {profile?.role === 'admin' && (
+            <SidebarItem 
+              icon={<Settings size={18} />} 
+              label="Управление системой" 
+              active={view === 'admin'} 
+              onClick={() => setView('admin')} 
+            />
+          )}
+        </div>
+
+        <div>
+          <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Период</h4>
+          <div className="space-y-1">
+            {PERIODS.map((p: string) => (
+              <button 
+                key={p}
+                onClick={() => setFilterPeriod(p)}
+                className={`w-full text-left px-4 py-2 rounded-xl text-sm font-bold transition-all ${filterPeriod === p ? 'bg-slate-100 text-logo-blue border border-slate-200' : 'text-slate-600 hover:bg-slate-50'}`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Направления</h4>
+          <div className="space-y-1">
+            {CATEGORIES.map((c: string) => (
+              <button 
+                key={c}
+                onClick={() => setFilterCategory(c)}
+                className={`w-full text-left px-4 py-2 rounded-xl text-sm font-bold transition-all ${filterCategory === c ? 'bg-slate-100 text-logo-blue border border-slate-200' : 'text-slate-600 hover:bg-slate-50'}`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="pt-4 border-t border-slate-100 space-y-6">
+          <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Доп. фильтры</h4>
+          
+          <div className="space-y-1">
+            <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Название события</label>
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
+              <input 
+                type="text"
+                placeholder="Поиск..."
+                value={filterTitle}
+                onChange={(e) => setFilterTitle(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 ring-logo-blue outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Спикер</label>
+            <input 
+              type="text"
+              placeholder="Фамилия..."
+              value={filterSpeaker}
+              onChange={(e) => setFilterSpeaker(e.target.value)}
+              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 ring-logo-blue outline-none"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Филиал</label>
+            <select 
+              value={filterBranch}
+              onChange={(e) => setFilterBranch(e.target.value)}
+              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 ring-logo-blue outline-none appearance-none cursor-pointer"
+            >
+              {BRANCHES.map((b: string) => <option key={b} value={b}>{b}</option>)}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Локация</label>
+            <input 
+              type="text"
+              placeholder="Место..."
+              value={filterLocation}
+              onChange={(e) => setFilterLocation(e.target.value)}
+              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 ring-logo-blue outline-none"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Диапазон дат</label>
+            <div className="grid grid-cols-2 gap-2">
+              <input 
+                type="date"
+                value={filterDateFrom}
+                onChange={(e) => setFilterDateFrom(e.target.value)}
+                className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold focus:ring-2 ring-logo-blue outline-none"
+                placeholder="От"
+              />
+              <input 
+                type="date"
+                value={filterDateTo}
+                onChange={(e) => setFilterDateTo(e.target.value)}
+                className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold focus:ring-2 ring-logo-blue outline-none"
+                placeholder="До"
+              />
+            </div>
+          </div>
+
+          {(filterTitle || filterSpeaker || filterDateFrom || filterDateTo || filterLocation || filterBranch !== 'Все филиалы') && (
+            <button 
+              onClick={() => {
+                setFilterTitle('');
+                setFilterSpeaker('');
+                setFilterDateFrom('');
+                setFilterDateTo('');
+                setFilterLocation('');
+                setFilterBranch('Все филиалы');
+              }}
+              className="w-full py-2 text-[10px] font-black text-red-500 bg-red-50 rounded-xl hover:bg-red-100 transition-colors"
+            >
+              Сбросить всё
+            </button>
+          )}
+
+          <div className="mt-4 pt-4 border-t border-slate-100">
+            <div className="text-[10px] text-slate-400 uppercase font-bold mb-2">Отладка</div>
+            <div className="text-xs text-slate-600">Всего событий в БД: {events.length}</div>
+            <button 
+              onClick={seedMockData}
+              disabled={seedStatus !== null}
+              className="w-full mt-2 py-2 text-[10px] font-black text-logo-blue bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <Plus size={12} />
+              {seedStatus || "ДОБАВИТЬ ТЕСТОВЫЕ ДАННЫЕ"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <button 
+        onClick={() => setView('profile')}
+        className="mt-auto w-full bg-slate-900 text-white py-4 rounded-2xl font-bold text-xs hover:bg-slate-800 transition-all shadow-lg shadow-slate-200"
+      >
+        Личный кабинет
+      </button>
+    </div>
+  );
+}
 
 interface EventRowProps {
   key?: string | number;
@@ -1123,20 +1235,20 @@ function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
   return (
     <motion.div 
       whileHover={{ y: -2 }}
-      className="group bg-white border border-slate-100 rounded-[32px] p-6 flex flex-col md:grid md:grid-cols-[120px_1fr_200px] gap-6 items-center transition-all hover:shadow-2xl hover:shadow-slate-200/50"
+      className="group bg-white border border-slate-100 rounded-[32px] p-5 md:p-6 flex flex-col md:grid md:grid-cols-[120px_1fr_200px] gap-4 md:gap-6 items-center transition-all hover:shadow-2xl hover:shadow-slate-200/50"
     >
-      <div className="flex md:flex-col items-center justify-center md:border-r border-slate-100 md:pr-6 w-full md:w-auto">
-        <span className="text-4xl font-black tracking-tighter leading-none">{day}</span>
-        <span className="text-[11px] font-black uppercase tracking-widest text-slate-400 ml-2 md:ml-0 md:mt-1">{month}</span>
+      <div className="flex md:flex-col items-center justify-center md:border-r border-slate-100 md:pr-6 w-full md:w-auto border-b md:border-b-0 pb-4 md:pb-0">
+        <span className="text-4xl md:text-5xl font-black tracking-tighter leading-none">{day}</span>
+        <span className="text-[11px] font-black uppercase tracking-widest text-slate-400 ml-3 md:ml-0 md:mt-1">{month}</span>
       </div>
 
-      <div className="flex-1 w-full px-2">
-        <div className="flex items-center gap-2 mb-3">
+      <div className="flex-1 w-full px-0 md:px-2">
+        <div className="flex flex-wrap items-center gap-2 mb-3">
           <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider text-white" style={{ backgroundColor: event.color || 'var(--color-logo-blue)' }}>
             {event.category}
           </span>
           <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
-            <MapPin size={10} /> {event.location} (Место проведения) {event.format && `— ${event.format}`}
+            <MapPin size={10} /> {event.location} {event.format && `— ${event.format}`}
           </span>
           {event.price !== undefined && (
             <span className="text-[10px] font-black text-logo-blue bg-blue-50 px-2 py-1 rounded-lg">
@@ -1144,11 +1256,11 @@ function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
             </span>
           )}
         </div>
-        <h3 className="text-2xl font-black tracking-tight group-hover:text-logo-blue transition-colors">{event.title}</h3>
+        <h3 className="text-xl md:text-2xl font-black tracking-tight group-hover:text-logo-blue transition-colors leading-tight">{event.title}</h3>
         {event.description && (
-          <p className="text-xs text-slate-500 mt-1 line-clamp-2">{event.description}</p>
+          <p className="text-xs text-slate-500 mt-2 line-clamp-2 leading-relaxed">{event.description}</p>
         )}
-        <div className="flex items-center gap-4 mt-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3">
           <p className="text-sm font-bold text-slate-500 flex items-center gap-1.5">
             <User size={14} className="text-slate-300" /> {event.speakerName}
           </p>
@@ -1162,10 +1274,10 @@ function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
         {/* Sessions Display */}
         {event.sessionsCount && event.sessionsCount > 1 && (
           <div className="mt-4 pt-4 border-t border-slate-50">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
               <Calendar size={12} /> Расписание занятий ({event.sessionsCount})
             </p>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {Array.from({ length: event.sessionsCount }).map((_, idx) => {
                 const sessionDate = event.sessionDates?.[idx];
                 const formattedDate = sessionDate 
@@ -1173,8 +1285,8 @@ function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
                   : 'Дата не указана';
                 
                 return (
-                  <div key={idx} className="px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-100 flex items-center gap-2">
-                    <span className="text-[9px] font-black text-logo-blue bg-blue-50 w-4 h-4 flex items-center justify-center rounded-full">
+                  <div key={idx} className="px-3 py-2 bg-slate-50 rounded-xl border border-slate-100 flex items-center gap-3">
+                    <span className="text-[9px] font-black text-logo-blue bg-blue-50 w-5 h-5 flex items-center justify-center rounded-full shrink-0">
                       {idx + 1}
                     </span>
                     <span className="text-[10px] font-bold text-slate-600">
@@ -1188,15 +1300,15 @@ function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
         )}
       </div>
 
-      <div className="flex flex-col items-center md:items-end w-full md:w-auto">
+      <div className="flex flex-col items-center md:items-end w-full md:w-auto pt-2 md:pt-0">
         <button 
           onClick={onRegister}
           disabled={isRegistering || isFull}
-          className="w-full md:w-auto bg-slate-900 text-white px-10 py-4 rounded-2xl font-bold text-sm hover:bg-logo-blue transition-all active:scale-95 shadow-xl shadow-slate-200 disabled:opacity-50"
+          className="w-full md:w-auto bg-slate-900 text-white px-10 py-5 md:py-4 rounded-2xl font-bold text-sm hover:bg-logo-blue transition-all active:scale-95 shadow-xl shadow-slate-200 disabled:opacity-50"
         >
           {isRegistering ? 'Запись...' : isFull ? 'Мест нет' : 'Записаться'}
         </button>
-        <div className={`mt-3 flex items-center gap-2 px-3 py-1.5 rounded-xl border ${isFull ? 'bg-red-50 border-red-100 text-red-600' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
+        <div className={`mt-4 md:mt-3 flex items-center gap-2 px-4 py-2 md:px-3 md:py-1.5 rounded-xl border ${isFull ? 'bg-red-50 border-red-100 text-red-600' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
           <Users size={12} className={isFull ? 'text-red-400' : 'text-slate-400'} />
           <span className="text-[10px] font-black uppercase tracking-widest">
             {registeredCount} / {event.maxParticipants || '∞'} ЗАПИСАНО
@@ -1705,38 +1817,38 @@ function AnalyticsDashboard({ events, records, participantsCount }: { events: Ev
   const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
 
   return (
-    <div className="space-y-12">
+    <div className="space-y-8 md:space-y-12">
       {/* Top Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-xl">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+        <div className="bg-white p-5 md:p-8 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-xl">
           <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Заполняемость</p>
-          <p className="text-3xl font-black">
+          <p className="text-xl md:text-3xl font-black">
             {Math.round((events.reduce((sum, e) => sum + e.registeredCount, 0) / events.reduce((sum, e) => sum + (e.maxParticipants || 0), 0)) * 100) || 0}%
           </p>
         </div>
-        <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-xl">
+        <div className="bg-white p-5 md:p-8 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-xl">
           <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Средний чек</p>
-          <p className="text-3xl font-black">
+          <p className="text-xl md:text-3xl font-black">
             {Math.round(records.filter(r => r.type === 'income').reduce((sum, r) => sum + r.amount, 0) / (events.reduce((sum, e) => sum + e.registeredCount, 0) || 1)).toLocaleString()} ₽
           </p>
         </div>
-        <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-xl">
+        <div className="bg-white p-5 md:p-8 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-xl">
           <p className="text-[10px] font-black uppercase text-slate-400 mb-2">База участников</p>
-          <p className="text-3xl font-black">{participantsCount.toLocaleString()}</p>
+          <p className="text-xl md:text-3xl font-black">{participantsCount.toLocaleString()}</p>
         </div>
-        <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-xl">
+        <div className="bg-white p-5 md:p-8 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-xl">
           <p className="text-[10px] font-black uppercase text-slate-400 mb-2">ROI (Средний)</p>
-          <p className="text-3xl font-black text-green-500">+24%</p>
+          <p className="text-xl md:text-3xl font-black text-green-500">+24%</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-12">
         {/* Revenue Chart */}
-        <div className="bg-white p-10 rounded-[40px] border border-slate-100 shadow-2xl">
-          <h3 className="text-xl font-black mb-8 flex items-center gap-3">
+        <div className="bg-white p-6 md:p-10 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-2xl">
+          <h3 className="text-lg md:text-xl font-black mb-6 md:mb-8 flex items-center gap-3">
             <TrendingUp className="text-logo-blue" /> Динамика выручки
           </h3>
-          <div className="h-[300px] w-full">
+          <div className="h-[250px] md:h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={revenueData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -1752,11 +1864,11 @@ function AnalyticsDashboard({ events, records, participantsCount }: { events: Ev
         </div>
 
         {/* Category Pie */}
-        <div className="bg-white p-10 rounded-[40px] border border-slate-100 shadow-2xl">
-          <h3 className="text-xl font-black mb-8 flex items-center gap-3">
+        <div className="bg-white p-6 md:p-10 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-2xl">
+          <h3 className="text-lg md:text-xl font-black mb-6 md:mb-8 flex items-center gap-3">
             <PieChartIcon className="text-logo-purple" /> Направления
           </h3>
-          <div className="h-[300px] w-full">
+          <div className="h-[250px] md:h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
@@ -1776,22 +1888,22 @@ function AnalyticsDashboard({ events, records, participantsCount }: { events: Ev
               </PieChart>
             </ResponsiveContainer>
           </div>
-          <div className="flex flex-wrap justify-center gap-4 mt-4">
+          <div className="flex flex-wrap justify-center gap-3 mt-4">
             {categoryData.map((c: any, i: number) => (
               <div key={c.name} className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{c.name}</span>
+                <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">{c.name}</span>
               </div>
             ))}
           </div>
         </div>
 
         {/* Branch Performance */}
-        <div className="bg-white p-10 rounded-[40px] border border-slate-100 shadow-2xl lg:col-span-2">
-          <h3 className="text-xl font-black mb-8 flex items-center gap-3">
+        <div className="bg-white p-6 md:p-10 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-2xl lg:col-span-2">
+          <h3 className="text-lg md:text-xl font-black mb-6 md:mb-8 flex items-center gap-3">
             <BarChart3 className="text-green-500" /> Эффективность филиалов
           </h3>
-          <div className="h-[350px] w-full">
+          <div className="h-[300px] md:h-[350px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={branchData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
