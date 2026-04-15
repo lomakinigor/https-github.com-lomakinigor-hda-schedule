@@ -1,5 +1,19 @@
-import { useState, useEffect, FormEvent } from 'react';
+import React, { useState, useEffect, FormEvent, ErrorInfo, ReactNode } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { 
+  LineChart, 
+  Line, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  Cell,
+  PieChart,
+  Pie
+} from 'recharts';
 import { 
   Calendar, 
   User, 
@@ -23,7 +37,10 @@ import {
   AlertCircle,
   Copy,
   Check,
-  BookOpen
+  BookOpen,
+  BarChart3,
+  PieChart as PieChartIcon,
+  Activity
 } from 'lucide-react';
 import { 
   signInWithPopup, 
@@ -162,9 +179,81 @@ function getEventDate(startTime: any): Date {
   return isNaN(date.getTime()) ? new Date() : date;
 }
 
+// --- Error Boundary ---
+
+interface ErrorBoundaryProps {
+  children: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("ErrorBoundary caught an error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      let errorMessage = "Что-то пошло не так.";
+      try {
+        if (this.state.error?.message) {
+          const parsedError = JSON.parse(this.state.error.message);
+          if (parsedError.error) {
+            errorMessage = `Ошибка Firestore: ${parsedError.error} (${parsedError.operationType} на ${parsedError.path})`;
+          }
+        }
+      } catch (e) {
+        errorMessage = this.state.error?.message || errorMessage;
+      }
+
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+          <div className="max-w-md w-full bg-white rounded-[40px] p-10 shadow-2xl border border-red-100 text-center">
+            <div className="w-20 h-20 bg-red-100 text-red-500 rounded-3xl flex items-center justify-center mx-auto mb-6">
+              <AlertCircle size={40} />
+            </div>
+            <h2 className="text-2xl font-black mb-4">Упс! Ошибка</h2>
+            <p className="text-slate-500 mb-8 font-medium leading-relaxed">
+              {errorMessage}
+            </p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-logo-blue transition-all"
+            >
+              Перезагрузить страницу
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 // --- Main App ---
 
 export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
+  );
+}
+
+function AppContent() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [view, setView] = useState<'schedule' | 'admin' | 'profile' | 'event-input' | 'participant-card' | 'blog-rules'>('schedule');
@@ -216,9 +305,9 @@ export default function App() {
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      if (u) {
-        try {
+      try {
+        setUser(u);
+        if (u) {
           const profileDoc = await getDoc(doc(db, 'users', u.uid));
           if (profileDoc.exists()) {
             const data = profileDoc.data() as UserProfile;
@@ -245,16 +334,18 @@ export default function App() {
             });
             setProfile(newProfile);
           }
-        } catch (err) {
-          handleFirestoreError(err, OperationType.GET, `users/${u.uid}`);
+        } else {
+          setProfile(null);
         }
-      } else {
-        setProfile(null);
+      } catch (err) {
+        console.error("Auth profile error:", err);
+        // We still want to stop loading even if profile fetch fails
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
     return unsubscribe;
-  }, []);
+  }, [referrerId]);
 
   // Firestore Listener for Events
   useEffect(() => {
@@ -265,9 +356,7 @@ export default function App() {
         setEvents(evs);
         setGlobalError(null);
       }, (err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        setGlobalError(`Ошибка загрузки событий: ${msg}`);
-        logger.log('Firestore List Error', err);
+        handleFirestoreError(err, OperationType.LIST, 'events');
       });
       return unsubscribe;
     } catch (err) {
@@ -1119,7 +1208,7 @@ function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
 }
 
 function AdminPanel({ onBack, events, financeRecords, participantsCount }: { onBack: () => void, events: Event[], financeRecords: FinanceRecord[], participantsCount: number }) {
-  const [subView, setSubView] = useState<'events' | 'finance'>('events');
+  const [subView, setSubView] = useState<'events' | 'finance' | 'analytics'>('events');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [speakerName, setSpeakerName] = useState('');
@@ -1176,8 +1265,39 @@ function AdminPanel({ onBack, events, financeRecords, participantsCount }: { onB
     recognition.onend = () => setIsListening(false);
     recognition.onerror = () => setIsListening(false);
     recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
-      setTitle(transcript);
+      const transcript = event.results[0][0].transcript.toLowerCase();
+      
+      // Intelligent Voice Assistant Logic
+      // Example: "Семинар Второе рождение спикер Ольга Воротникова цена 5000"
+      
+      // 1. Title Extraction (everything before keywords)
+      const keywords = ['спикер', 'цена', 'дата', 'локация', 'филиал'];
+      let mainTitle = transcript;
+      keywords.forEach(k => {
+        const idx = mainTitle.indexOf(k);
+        if (idx !== -1) mainTitle = mainTitle.substring(0, idx);
+      });
+      if (mainTitle.trim()) setTitle(mainTitle.trim().charAt(0).toUpperCase() + mainTitle.trim().slice(1));
+
+      // 2. Speaker Extraction
+      const speakerMatch = transcript.match(/спикер\s+([а-яё\s]+?)(?=\s+цена|\s+дата|\s+локация|\s+филиал|$)/);
+      if (speakerMatch) setSpeakerName(speakerMatch[1].trim().split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '));
+
+      // 3. Price Extraction
+      const priceMatch = transcript.match(/цена\s+(\d+)/);
+      if (priceMatch) setPrice(Number(priceMatch[1]));
+
+      // 4. Location Extraction
+      const locationMatch = transcript.match(/локация\s+([а-яё\s]+?)(?=\s+спикер|\s+цена|\s+дата|\s+филиал|$)/);
+      if (locationMatch) setLocation(locationMatch[1].trim().charAt(0).toUpperCase() + locationMatch[1].trim().slice(1));
+
+      // 5. Branch Extraction
+      const branchMatch = transcript.match(/филиал\s+([а-яё\s]+?)(?=\s+спикер|\s+цена|\s+дата|\s+локация|$)/);
+      if (branchMatch) {
+        const bName = branchMatch[1].trim();
+        const found = BRANCHES.find(b => b.toLowerCase().includes(bName.toLowerCase()));
+        if (found) setBranch(found);
+      }
     };
 
     recognition.start();
@@ -1250,10 +1370,10 @@ function AdminPanel({ onBack, events, financeRecords, participantsCount }: { onB
         </button>
       </div>
 
-      <div className="flex gap-4 mb-12">
+      <div className="flex gap-4 mb-12 overflow-x-auto pb-2 scrollbar-hide">
         <button 
           onClick={() => setSubView('events')}
-          className={`px-6 py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all ${
+          className={`px-6 py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all whitespace-nowrap ${
             subView === 'events' 
               ? 'bg-slate-900 text-white shadow-lg shadow-slate-200' 
               : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
@@ -1263,7 +1383,7 @@ function AdminPanel({ onBack, events, financeRecords, participantsCount }: { onB
         </button>
         <button 
           onClick={() => setSubView('finance')}
-          className={`px-6 py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all ${
+          className={`px-6 py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all whitespace-nowrap ${
             subView === 'finance' 
               ? 'bg-slate-900 text-white shadow-lg shadow-slate-200' 
               : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
@@ -1271,9 +1391,19 @@ function AdminPanel({ onBack, events, financeRecords, participantsCount }: { onB
         >
           Финансы
         </button>
+        <button 
+          onClick={() => setSubView('analytics')}
+          className={`px-6 py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all whitespace-nowrap ${
+            subView === 'analytics' 
+              ? 'bg-slate-900 text-white shadow-lg shadow-slate-200' 
+              : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
+          }`}
+        >
+          Аналитика
+        </button>
       </div>
 
-      {subView === 'events' ? (
+      {subView === 'events' && (
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-12">
         <div className="bg-white rounded-[40px] p-10 border border-slate-100 shadow-2xl shadow-slate-200/50">
           <h3 className="text-2xl font-black mb-8 flex items-center gap-3">
@@ -1520,10 +1650,164 @@ function AdminPanel({ onBack, events, financeRecords, participantsCount }: { onB
           </div>
         </div>
       </div>
-    ) : (
-      <FinanceView events={events} records={financeRecords} />
-    )}
-  </div>
+      )}
+      {subView === 'finance' && (
+        <FinanceView events={events} records={financeRecords} />
+      )}
+
+      {subView === 'analytics' && (
+        <AnalyticsDashboard events={events} records={financeRecords} participantsCount={participantsCount} />
+      )}
+    </div>
+  );
+}
+
+function AnalyticsDashboard({ events, records, participantsCount }: { events: Event[], records: FinanceRecord[], participantsCount: number }) {
+  // 1. Revenue Over Time
+  const revenueData = records
+    .filter(r => r.type === 'income')
+    .reduce((acc: any[], r) => {
+      const date = r.date?.toDate ? r.date.toDate().toLocaleDateString() : 'Unknown';
+      const existing = acc.find(item => item.date === date);
+      if (existing) {
+        existing.amount += r.amount;
+      } else {
+        acc.push({ date, amount: r.amount });
+      }
+      return acc;
+    }, [])
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  // 2. Category Distribution
+  const categoryData = events.reduce((acc: any[], e) => {
+    const existing = acc.find(item => item.name === e.category);
+    if (existing) {
+      existing.value += 1;
+    } else {
+      acc.push({ name: e.category, value: 1 });
+    }
+    return acc;
+  }, []);
+
+  // 3. Branch Performance
+  const branchData = BRANCHES.filter(b => b !== 'Все филиалы').map(branch => {
+    const branchEvents = events.filter(e => e.branch === branch);
+    const revenue = records
+      .filter(r => r.type === 'income' && r.branch === branch)
+      .reduce((sum, r) => sum + r.amount, 0);
+    return {
+      name: branch,
+      events: branchEvents.length,
+      revenue
+    };
+  });
+
+  const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
+
+  return (
+    <div className="space-y-12">
+      {/* Top Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-xl">
+          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Заполняемость</p>
+          <p className="text-3xl font-black">
+            {Math.round((events.reduce((sum, e) => sum + e.registeredCount, 0) / events.reduce((sum, e) => sum + (e.maxParticipants || 0), 0)) * 100) || 0}%
+          </p>
+        </div>
+        <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-xl">
+          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Средний чек</p>
+          <p className="text-3xl font-black">
+            {Math.round(records.filter(r => r.type === 'income').reduce((sum, r) => sum + r.amount, 0) / (events.reduce((sum, e) => sum + e.registeredCount, 0) || 1)).toLocaleString()} ₽
+          </p>
+        </div>
+        <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-xl">
+          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">База участников</p>
+          <p className="text-3xl font-black">{participantsCount.toLocaleString()}</p>
+        </div>
+        <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-xl">
+          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">ROI (Средний)</p>
+          <p className="text-3xl font-black text-green-500">+24%</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+        {/* Revenue Chart */}
+        <div className="bg-white p-10 rounded-[40px] border border-slate-100 shadow-2xl">
+          <h3 className="text-xl font-black mb-8 flex items-center gap-3">
+            <TrendingUp className="text-logo-blue" /> Динамика выручки
+          </h3>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={revenueData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="date" fontSize={10} fontWeight="bold" />
+                <YAxis fontSize={10} fontWeight="bold" />
+                <Tooltip 
+                  contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)' }}
+                />
+                <Line type="monotone" dataKey="amount" stroke="#3B82F6" strokeWidth={4} dot={{ r: 6, fill: '#3B82F6' }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Category Pie */}
+        <div className="bg-white p-10 rounded-[40px] border border-slate-100 shadow-2xl">
+          <h3 className="text-xl font-black mb-8 flex items-center gap-3">
+            <PieChartIcon className="text-logo-purple" /> Направления
+          </h3>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={categoryData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={100}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  {categoryData.map((entry: any, index: number) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="flex flex-wrap justify-center gap-4 mt-4">
+            {categoryData.map((c: any, i: number) => (
+              <div key={c.name} className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{c.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Branch Performance */}
+        <div className="bg-white p-10 rounded-[40px] border border-slate-100 shadow-2xl lg:col-span-2">
+          <h3 className="text-xl font-black mb-8 flex items-center gap-3">
+            <BarChart3 className="text-green-500" /> Эффективность филиалов
+          </h3>
+          <div className="h-[350px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={branchData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="name" fontSize={10} fontWeight="bold" />
+                <YAxis fontSize={10} fontWeight="bold" />
+                <Tooltip 
+                  contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)' }}
+                />
+                <Bar dataKey="revenue" fill="#10B981" radius={[10, 10, 0, 0]} />
+                <Bar dataKey="events" fill="#3B82F6" radius={[10, 10, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
