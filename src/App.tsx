@@ -34,6 +34,7 @@ import {
   Search,
   X,
   Menu as MenuIcon,
+  ShieldCheck,
   ChevronDown,
   AlertCircle,
   Copy,
@@ -743,8 +744,19 @@ function AppContent() {
         
         <div className="flex items-center gap-4">
           {user ? (
-            <div className="flex items-center gap-3">
-              <div className="text-right hidden md:block">
+            <div className="flex items-center gap-2 md:gap-4">
+              {profile?.role === 'admin' && (
+                <button 
+                  onClick={() => setView('admin')}
+                  className="flex items-center gap-2 px-3 py-2 bg-amber-50 text-amber-700 rounded-xl border border-amber-100 hover:bg-amber-100 transition-all shadow-sm"
+                  title="Панель управления"
+                >
+                  <ShieldCheck size={18} />
+                  <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">Админ</span>
+                </button>
+              )}
+              <div className="flex items-center gap-3">
+                <div className="text-right hidden md:block">
                 <p className="text-sm font-bold">{user.displayName}</p>
                 <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">{profile?.role}</p>
               </div>
@@ -758,6 +770,7 @@ function AppContent() {
                 <LogOut size={20} />
               </button>
             </div>
+          </div>
           ) : (
             <button 
               onClick={handleLogin}
