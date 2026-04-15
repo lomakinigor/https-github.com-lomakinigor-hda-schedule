@@ -267,6 +267,8 @@ function AppContent() {
   const [calendarView, setCalendarView] = useState<'List' | 'Calendar'>('List');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
+  const isAdmin = profile?.role === 'admin' || user?.email === 'il17184@gmail.com';
+
   // Filter States
   const [filterTitle, setFilterTitle] = useState('');
   const [filterSpeaker, setFilterSpeaker] = useState('');
@@ -744,33 +746,44 @@ function AppContent() {
         
         <div className="flex items-center gap-4">
           {user ? (
-            <div className="flex items-center gap-2 md:gap-4">
-              {profile?.role === 'admin' && (
+            <div className="flex items-center gap-3 md:gap-6">
+              {isAdmin && (
                 <button 
                   onClick={() => setView('admin')}
-                  className="flex items-center gap-2 px-3 py-2 bg-amber-50 text-amber-700 rounded-xl border border-amber-100 hover:bg-amber-100 transition-all shadow-sm"
+                  className="flex items-center gap-2 px-3 py-2 bg-amber-50 text-amber-700 rounded-xl border border-amber-100 hover:bg-amber-100 transition-all shadow-sm group"
                   title="Панель управления"
                 >
-                  <ShieldCheck size={18} />
+                  <ShieldCheck size={18} className="group-hover:scale-110 transition-transform" />
                   <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">Админ</span>
                 </button>
               )}
+              
               <div className="flex items-center gap-3">
                 <div className="text-right hidden md:block">
-                <p className="text-sm font-bold">{user.displayName}</p>
-                <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">{profile?.role}</p>
+                  <p className="text-sm font-bold leading-tight">{user.displayName}</p>
+                  <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest">{profile?.role || 'Загрузка...'}</p>
+                </div>
+                
+                <button 
+                  onClick={() => setView(view === 'profile' ? 'schedule' : 'profile')}
+                  className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden border border-slate-200 hover:border-logo-blue transition-all shadow-sm"
+                >
+                  {user.photoURL ? (
+                    <img src={user.photoURL} alt="avatar" className="w-full h-full object-cover" />
+                  ) : (
+                    <User size={20} className="text-slate-400" />
+                  )}
+                </button>
+
+                <button 
+                  onClick={handleLogout} 
+                  className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+                  title="Выйти"
+                >
+                  <LogOut size={20} />
+                </button>
               </div>
-              <button 
-                onClick={() => setView(view === 'profile' ? 'schedule' : 'profile')}
-                className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden border border-slate-200 hover:border-logo-blue transition-all"
-              >
-                {user.photoURL ? <img src={user.photoURL} alt="avatar" className="w-full h-full object-cover" /> : <User size={20} />}
-              </button>
-              <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-500 transition-colors">
-                <LogOut size={20} />
-              </button>
             </div>
-          </div>
           ) : (
             <button 
               onClick={handleLogin}
@@ -789,6 +802,7 @@ function AppContent() {
             view={view} 
             setView={setView} 
             profile={profile} 
+            isAdmin={isAdmin}
             PERIODS={PERIODS} 
             filterPeriod={filterPeriod} 
             setFilterPeriod={setFilterPeriod}
@@ -1009,6 +1023,7 @@ function AppContent() {
                     setIsMobileMenuOpen(false);
                   }} 
                   profile={profile} 
+                  isAdmin={isAdmin}
                   PERIODS={PERIODS} 
                   filterPeriod={filterPeriod} 
                   setFilterPeriod={setFilterPeriod}
@@ -1044,7 +1059,7 @@ function AppContent() {
 // --- Sub-components ---
 
 function SidebarContent({ 
-  view, setView, profile, PERIODS, filterPeriod, setFilterPeriod,
+  view, setView, profile, isAdmin, PERIODS, filterPeriod, setFilterPeriod,
   CATEGORIES, filterCategory, setFilterCategory,
   filterTitle, setFilterTitle, filterSpeaker, setFilterSpeaker,
   filterBranch, setFilterBranch, BRANCHES,
@@ -1080,7 +1095,7 @@ function SidebarContent({
             active={view === 'blog-rules'} 
             onClick={() => setView('blog-rules')} 
           />
-          {profile?.role === 'admin' && (
+          {isAdmin && (
             <SidebarItem 
               icon={<Settings size={18} />} 
               label="Управление системой" 

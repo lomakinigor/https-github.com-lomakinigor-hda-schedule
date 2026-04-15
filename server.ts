@@ -74,11 +74,17 @@ async function startServer() {
   });
 
   // Determine if we should serve static files or use Vite
-  const distPath = path.join(process.cwd(), 'dist');
-  const useStatic = fs.existsSync(distPath) && fs.existsSync(path.join(distPath, 'index.html'));
+  const isProd = process.env.NODE_ENV === 'production';
+  const distPath = path.resolve(__dirname, 'dist');
 
-  if (useStatic) {
-    log(`Serving static files from: ${distPath}`);
+  if (isProd) {
+    log(`Production mode: serving static files from ${distPath}`);
+    
+    // Check if dist exists
+    if (!fs.existsSync(distPath) || !fs.existsSync(path.join(distPath, 'index.html'))) {
+      log(`ERROR: dist/index.html not found at ${distPath}. Build may have failed.`);
+    }
+
     app.use(express.static(distPath));
     
     // Handle SPA routing
@@ -86,12 +92,16 @@ async function startServer() {
       // Skip API routes
       if (req.url.startsWith('/api/')) return next();
       
-      log(`Request for: ${req.url} -> serving index.html`);
       const indexPath = path.join(distPath, 'index.html');
-      res.sendFile(indexPath);
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        log(`ERROR: index.html missing during request for ${req.url}`);
+        res.status(404).send("Application not built. Please run build first.");
+      }
     });
   } else {
-    log("dist directory not found or incomplete. Falling back to Vite middleware...");
+    log("Development mode: Falling back to Vite middleware...");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
