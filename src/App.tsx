@@ -163,8 +163,8 @@ interface UserProfile {
 }
 
 const BRANCHES = ['Все филиалы', 'Екатеринбург', 'Москва', 'Санкт-Петербург', 'Новосибирск', 'Казань'];
-const CATEGORIES = ['Семинары', 'Практики', 'Ретриты', 'Путешествия', 'все направления'];
-const PERIODS = ['Месяц', 'Квартал', 'Год', 'произвольный'];
+const CATEGORIES = ['Семинары', 'Практики', 'Ретриты', 'Путешествия', 'Все направления'];
+const PERIODS = ['Месяц', 'Квартал', 'Год', 'Произвольный'];
 
 function getEventDate(startTime: any): Date {
   if (!startTime) return new Date();
@@ -379,6 +379,10 @@ function AppContent() {
 
   // Firestore Listener for Finance
   useEffect(() => {
+    if (!isAdmin) {
+      setFinanceRecords([]);
+      return;
+    }
     try {
       const q = query(collection(db, 'finance'), orderBy('date', 'desc'));
       const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -392,10 +396,14 @@ function AppContent() {
       logger.log('Finance Listener Error', err);
       return () => {};
     }
-  }, []);
+  }, [isAdmin]);
 
   // Firestore Listener for Participants Count
   useEffect(() => {
+    if (!isAdmin) {
+      setParticipantsCount(0);
+      return;
+    }
     try {
       const q = query(collection(db, 'participants'));
       const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -408,7 +416,7 @@ function AppContent() {
       logger.log('Participants Listener Error', err);
       return () => {};
     }
-  }, []);
+  }, [isAdmin]);
 
   const seedMockData = async () => {
     const mockEvents = [
@@ -666,7 +674,7 @@ function AppContent() {
                              filterCategory === 'Практики' ? event.category === 'Практика' :
                              filterCategory === 'Ретриты' ? event.category === 'Ретрит' :
                              filterCategory === 'Путешествия' ? event.category === 'Путешествие' : 
-                             filterCategory === 'все направления' ? true : true;
+                             filterCategory === 'Все направления' ? true : true;
       
       let matchesPeriod = true;
       const eventTime = eventDate.getTime();
@@ -684,7 +692,7 @@ function AppContent() {
         const twelveMonthsLater = new Date(sessionAnchorDate);
         twelveMonthsLater.setFullYear(twelveMonthsLater.getFullYear() + 1);
         matchesPeriod = eventTime >= anchorTime && eventTime < twelveMonthsLater.getTime();
-      } else if (filterPeriod === 'произвольный') {
+      } else if (filterPeriod === 'Произвольный') {
         // When custom is selected, we rely on the matchesDate logic below
         matchesPeriod = true;
       }
@@ -1049,14 +1057,14 @@ function SidebarContent({
       </div>
 
       <div className="space-y-6">
-          <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Период</h4>
+          <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4">Период</h4>
           <div className="space-y-1">
             {PERIODS.map((p: string) => (
               <button 
                 key={p}
                 onClick={() => {
                   setFilterPeriod(p);
-                  if (p !== 'произвольный') {
+                  if (p !== 'Произвольный') {
                     setFilterDateFrom('');
                     setFilterDateTo('');
                   }
@@ -1068,7 +1076,7 @@ function SidebarContent({
             ))}
           </div>
 
-          {filterPeriod === 'произвольный' && (
+          {filterPeriod === 'Произвольный' && (
             <motion.div 
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
@@ -1097,7 +1105,7 @@ function SidebarContent({
         </div>
 
         <div>
-          <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Направления</h4>
+          <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4">Направления</h4>
           <div className="space-y-1">
             {CATEGORIES.map((c: string) => (
               <button 
@@ -1112,7 +1120,7 @@ function SidebarContent({
         </div>
 
         <div className="pt-4 border-t border-slate-100 space-y-6">
-          <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Доп. фильтры</h4>
+          <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4">Доп. фильтры</h4>
           
           <div className="space-y-1">
             <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Название события</label>
@@ -1144,7 +1152,7 @@ function SidebarContent({
             <select 
               value={filterBranch}
               onChange={(e) => setFilterBranch(e.target.value)}
-              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 ring-logo-blue outline-none appearance-none cursor-pointer"
+              className={`w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 ring-logo-blue outline-none appearance-none cursor-pointer transition-colors ${filterBranch === 'Все филиалы' ? 'text-slate-400' : 'text-slate-900'}`}
             >
               {BRANCHES.map((b: string) => <option key={b} value={b}>{b}</option>)}
             </select>
