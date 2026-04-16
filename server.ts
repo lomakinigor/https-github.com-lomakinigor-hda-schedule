@@ -33,6 +33,16 @@ async function startServer() {
   app.use(express.json());
 
   // API routes
+  app.get("/api/blog", (req, res) => {
+    const blogPath = path.join(process.cwd(), "BLOG.md");
+    if (fs.existsSync(blogPath)) {
+      const content = fs.readFileSync(blogPath, "utf-8");
+      res.json({ content });
+    } else {
+      res.status(404).json({ error: "BLOG.md not found" });
+    }
+  });
+
   app.get("/api/health", (req, res) => {
     res.json({ 
       status: "ok", 

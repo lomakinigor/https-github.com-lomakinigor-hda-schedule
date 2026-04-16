@@ -1,5 +1,6 @@
 import React, { useState, useEffect, FormEvent, ErrorInfo, ReactNode } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import ReactMarkdown from 'react-markdown';
 import { 
   LineChart, 
   Line, 
@@ -71,8 +72,8 @@ import { logger } from './lib/logger';
 
 // --- Components ---
 
-const Logo = ({ className = "w-12 h-12" }: { className?: string }) => (
-  <svg className={className} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+const Logo = ({ className = "w-12 h-12", onClick }: { className?: string, onClick?: () => void }) => (
+  <svg className={`${className} ${onClick ? 'cursor-pointer' : ''}`} onClick={onClick} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
     <g transform="translate(50, 50)">
       {/* Petals - Refined to match the elegant pointed shape in the image */}
       <path d="M0 0 C8 -15 12 -30 0 -48 C-12 -30 -8 -15 0 0" fill="#E2E8F0" /> {/* Top: Grey */}
@@ -162,8 +163,8 @@ interface UserProfile {
 }
 
 const BRANCHES = ['Все филиалы', 'Екатеринбург', 'Москва', 'Санкт-Петербург', 'Новосибирск', 'Казань'];
-const CATEGORIES = ['Все направления', 'Семинары', 'Вебинары', 'Практики'];
-const PERIODS = ['Апрель 2026', 'Май 2026', 'Июнь 2026', 'Весь год'];
+const CATEGORIES = ['Семинары', 'Практики', 'Ретриты', 'Путешествия'];
+const PERIODS = ['Месяц', 'Квартал', 'Год'];
 
 function getEventDate(startTime: any): Date {
   if (!startTime) return new Date();
@@ -258,7 +259,7 @@ export default function App() {
 function AppContent() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [view, setView] = useState<'schedule' | 'admin' | 'profile' | 'event-input' | 'participant-card' | 'blog-rules'>('schedule');
+  const [view, setView] = useState<'schedule' | 'admin' | 'profile' | 'event-input' | 'participant-card'>('schedule');
   const [events, setEvents] = useState<Event[]>([]);
   const [financeRecords, setFinanceRecords] = useState<FinanceRecord[]>([]);
   const [participantsCount, setParticipantsCount] = useState(0);
@@ -266,6 +267,12 @@ function AppContent() {
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [calendarView, setCalendarView] = useState<'List' | 'Calendar'>('List');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [sessionAnchorDate] = useState(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  });
 
   const isAdmin = profile?.role === 'admin' || user?.email === 'il17184@gmail.com';
 
@@ -280,15 +287,15 @@ function AppContent() {
     setFilterSpeaker('');
     setFilterLocation('');
     setFilterBranch('Все филиалы');
-    setFilterCategory('Все направления');
-    setFilterPeriod('Весь год');
+    setFilterCategory('Семинары');
+    setFilterPeriod('Месяц');
     setFilterDateFrom('');
     setFilterDateTo('');
   };
   const [filterLocation, setFilterLocation] = useState('');
   const [filterBranch, setFilterBranch] = useState('Все филиалы');
-  const [filterCategory, setFilterCategory] = useState('Все направления');
-  const [filterPeriod, setFilterPeriod] = useState('Весь год');
+  const [filterCategory, setFilterCategory] = useState('Семинары');
+  const [filterPeriod, setFilterPeriod] = useState('Месяц');
   const [showFilters, setShowFilters] = useState(true);
 
   const [seedStatus, setSeedStatus] = useState<string | null>(null);
@@ -596,8 +603,8 @@ function AppContent() {
   const handleLogout = () => signOut(auth);
 
   const handleRegister = async (event: Event) => {
-    if (!user || !profile) {
-      alert('Пожалуйста, войдите в систему, чтобы записаться на событие.');
+    if (!user) {
+      setShowAuthModal(true);
       return;
     }
 
@@ -655,30 +662,27 @@ function AppContent() {
       const matchesSpeaker = (event.speakerName || '').toLowerCase().includes(filterSpeaker.toLowerCase());
       const matchesLocation = (event.location || '').toLowerCase().includes(filterLocation.toLowerCase());
       const matchesBranch = filterBranch === 'Все филиалы' || event.branch === filterBranch;
-      const matchesCategory = filterCategory === 'Все направления' || 
-                             (filterCategory === 'Семинары' && event.category === 'Семинар') ||
-                             (filterCategory === 'Вебинары' && event.category === 'Вебинар') ||
-                             (filterCategory === 'Практики' && event.category === 'Практика');
+      const matchesCategory = filterCategory === 'Seminars' ? event.category === 'Семинар' :
+                             filterCategory === 'Practices' ? event.category === 'Практика' :
+                             filterCategory === 'Retreats' ? event.category === 'Ретрит' :
+                             filterCategory === 'Travels' ? event.category === 'Путешествие' : true;
       
       let matchesPeriod = true;
-      if (filterPeriod !== 'Весь год') {
-        const eventMonth = eventDate.getMonth();
-        const eventYear = eventDate.getFullYear();
-        
-        // Explicit month/year matching for reliability
-        if (filterPeriod === 'Апрель 2026') {
-          matchesPeriod = eventMonth === 3 && eventYear === 2026;
-        } else if (filterPeriod === 'Май 2026') {
-          matchesPeriod = eventMonth === 4 && eventYear === 2026;
-        } else if (filterPeriod === 'Июнь 2026') {
-          matchesPeriod = eventMonth === 5 && eventYear === 2026;
-        } else {
-          // Fallback to string matching if period is unknown
-          const monthNames = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
-          const eventMonthName = monthNames[eventMonth];
-          const fp = filterPeriod.toLowerCase();
-          matchesPeriod = fp.includes(eventMonthName) && fp.includes(eventYear.toString());
-        }
+      const eventTime = eventDate.getTime();
+      const anchorTime = sessionAnchorDate.getTime();
+
+      if (filterPeriod === 'Month') {
+        const oneMonthLater = new Date(sessionAnchorDate);
+        oneMonthLater.setMonth(oneMonthLater.getMonth() + 1);
+        matchesPeriod = eventTime >= anchorTime && eventTime < oneMonthLater.getTime();
+      } else if (filterPeriod === 'Quarter') {
+        const threeMonthsLater = new Date(sessionAnchorDate);
+        threeMonthsLater.setMonth(threeMonthsLater.getMonth() + 3);
+        matchesPeriod = eventTime >= anchorTime && eventTime < threeMonthsLater.getTime();
+      } else if (filterPeriod === 'Year') {
+        const twelveMonthsLater = new Date(sessionAnchorDate);
+        twelveMonthsLater.setFullYear(twelveMonthsLater.getFullYear() + 1);
+        matchesPeriod = eventTime >= anchorTime && eventTime < twelveMonthsLater.getTime();
       }
       
       let matchesDate = true;
@@ -729,69 +733,18 @@ function AppContent() {
   return (
     <div className="min-h-screen bg-[#F8F9FB] font-sans text-slate-950 flex flex-col">
       {/* --- HEADER --- */}
-      <header className="bg-white/80 backdrop-blur-xl border-b border-slate-200/60 px-4 md:px-[5%] py-3 md:py-4 flex items-center justify-between sticky top-0 z-[100] shadow-sm">
-        <div className="flex items-center gap-2 md:gap-4">
+      <header className="bg-white/80 backdrop-blur-xl border-b border-slate-200/60 sticky top-0 z-[100] shadow-sm overflow-hidden">
+        <div className="w-full flex items-center px-4 md:px-[5%] py-3 md:py-4 gap-4">
           <button 
             onClick={() => setIsMobileMenuOpen(true)}
             className="lg:hidden p-2 hover:bg-slate-100 rounded-xl transition-colors text-slate-600"
           >
             <MenuIcon size={24} />
           </button>
-          <Logo className="w-10 h-10 md:w-14 md:h-14" />
-          <h1 className="text-xl md:text-5xl font-black uppercase tracking-tighter text-orange-500 leading-none">
-            <span className="hidden sm:inline">Академия Развития Человека</span>
-            <span className="sm:hidden">АРЧ</span>
+          <Logo className="w-10 h-10 md:w-14 md:h-14 shrink-0" onClick={() => setView('schedule')} />
+          <h1 className="flex-1 text-2xl md:text-6xl font-black uppercase tracking-tighter text-orange-500 leading-none cursor-pointer truncate py-2" onClick={() => setView('schedule')}>
+            Академия Развития Человека
           </h1>
-        </div>
-        
-        <div className="flex items-center gap-4">
-          {user ? (
-            <div className="flex items-center gap-3 md:gap-6">
-              {isAdmin && (
-                <button 
-                  onClick={() => setView('admin')}
-                  className="flex items-center gap-2 px-3 py-2 bg-amber-50 text-amber-700 rounded-xl border border-amber-100 hover:bg-amber-100 transition-all shadow-sm group"
-                  title="Панель управления"
-                >
-                  <ShieldCheck size={18} className="group-hover:scale-110 transition-transform" />
-                  <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">Админ</span>
-                </button>
-              )}
-              
-              <div className="flex items-center gap-3">
-                <div className="text-right hidden md:block">
-                  <p className="text-sm font-bold leading-tight">{user.displayName}</p>
-                  <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest">{profile?.role || 'Загрузка...'}</p>
-                </div>
-                
-                <button 
-                  onClick={() => setView(view === 'profile' ? 'schedule' : 'profile')}
-                  className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden border border-slate-200 hover:border-logo-blue transition-all shadow-sm"
-                >
-                  {user.photoURL ? (
-                    <img src={user.photoURL} alt="avatar" className="w-full h-full object-cover" />
-                  ) : (
-                    <User size={20} className="text-slate-400" />
-                  )}
-                </button>
-
-                <button 
-                  onClick={handleLogout} 
-                  className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-                  title="Выйти"
-                >
-                  <LogOut size={20} />
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button 
-              onClick={handleLogin}
-              className="px-6 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-logo-blue transition-all active:scale-95 shadow-lg shadow-slate-200"
-            >
-              Войти
-            </button>
-          )}
         </div>
       </header>
 
@@ -802,6 +755,7 @@ function AppContent() {
             view={view} 
             setView={setView} 
             profile={profile} 
+            user={user}
             isAdmin={isAdmin}
             PERIODS={PERIODS} 
             filterPeriod={filterPeriod} 
@@ -825,25 +779,17 @@ function AppContent() {
             events={events}
             seedMockData={seedMockData}
             seedStatus={seedStatus}
+            handleLogin={handleLogin}
+            handleLogout={handleLogout}
           />
         </aside>
 
         {/* --- MAIN CONTENT --- */}
         <main className="flex-1 flex flex-col overflow-hidden p-6 md:p-12">
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
-            <h2 className="text-3xl md:text-4xl font-black tracking-tight">Расписание</h2>
-            
-            <div className="flex bg-slate-200 p-1 rounded-2xl self-start md:self-auto">
-              {['List', 'Calendar'].map((v) => (
-                <button 
-                  key={v}
-                  onClick={() => setCalendarView(v as any)}
-                  className={`px-6 py-2 rounded-xl text-xs font-bold transition-all ${calendarView === v ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
-                >
-                  {v === 'List' ? 'Список' : 'Календарь'}
-                </button>
-              ))}
-            </div>
+          <div className="w-full mb-12">
+            <h2 className="text-4xl md:text-7xl font-black tracking-tighter uppercase border-b-4 border-slate-900 pb-4 w-full">
+              Расписание
+            </h2>
           </div>
 
           <div className="flex-1 overflow-y-auto scrollbar-hide pb-12">
@@ -966,28 +912,9 @@ function AppContent() {
             </motion.div>
           </motion.div>
         )}
-        {view === 'blog-rules' && (
-          <motion.div 
-            initial={{ opacity: 0 }} 
-            animate={{ opacity: 1 }} 
-            exit={{ opacity: 0 }} 
-            className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 md:p-8 overflow-y-auto"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative w-full max-w-3xl bg-white rounded-[40px] shadow-2xl overflow-hidden"
-            >
-              <button 
-                onClick={() => setView('schedule')} 
-                className="absolute top-6 right-6 z-10 p-2 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
-              >
-                <X size={20} />
-              </button>
-              <BlogRulesView />
-            </motion.div>
-          </motion.div>
+
+        {showAuthModal && (
+          <AuthRequiredModal onClose={() => setShowAuthModal(false)} onLogin={() => { setShowAuthModal(false); handleLogin(); }} />
         )}
 
         {/* --- MOBILE MENU OVERLAY --- */}
@@ -1023,6 +950,7 @@ function AppContent() {
                     setIsMobileMenuOpen(false);
                   }} 
                   profile={profile} 
+                  user={user}
                   isAdmin={isAdmin}
                   PERIODS={PERIODS} 
                   filterPeriod={filterPeriod} 
@@ -1046,6 +974,8 @@ function AppContent() {
                   events={events}
                   seedMockData={seedMockData}
                   seedStatus={seedStatus}
+                  handleLogin={handleLogin}
+                  handleLogout={handleLogout}
                 />
               </div>
             </motion.div>
@@ -1059,53 +989,69 @@ function AppContent() {
 // --- Sub-components ---
 
 function SidebarContent({ 
-  view, setView, profile, isAdmin, PERIODS, filterPeriod, setFilterPeriod,
+  view, setView, profile, user, isAdmin, PERIODS, filterPeriod, setFilterPeriod,
   CATEGORIES, filterCategory, setFilterCategory,
   filterTitle, setFilterTitle, filterSpeaker, setFilterSpeaker,
   filterBranch, setFilterBranch, BRANCHES,
   filterLocation, setFilterLocation,
   filterDateFrom, setFilterDateFrom, filterDateTo, setFilterDateTo,
-  events, seedMockData, seedStatus
+  events, seedMockData, seedStatus, handleLogin, handleLogout
 }: any) {
   return (
     <div className="flex flex-col h-full gap-8">
-      <div className="space-y-6">
-        <div className="space-y-2 mb-8">
-          <SidebarItem 
-            icon={<Calendar size={18} />} 
-            label="Расписание" 
-            active={view === 'schedule'} 
-            onClick={() => setView('schedule')} 
-          />
-          <SidebarItem 
-            icon={<Plus size={18} />} 
-            label="Ввод мероприятия" 
-            active={view === 'event-input'} 
-            onClick={() => setView('event-input')} 
-          />
-          <SidebarItem 
-            icon={<User size={18} />} 
-            label="Карточка участника" 
-            active={view === 'participant-card'} 
-            onClick={() => setView('participant-card')} 
-          />
-          <SidebarItem 
-            icon={<BookOpen size={18} />} 
-            label="Правила блога" 
-            active={view === 'blog-rules'} 
-            onClick={() => setView('blog-rules')} 
-          />
-          {isAdmin && (
-            <SidebarItem 
-              icon={<Settings size={18} />} 
-              label="Управление системой" 
-              active={view === 'admin'} 
-              onClick={() => setView('admin')} 
-            />
-          )}
-        </div>
+      <div className="space-y-3">
+        {user ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+              <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center overflow-hidden border border-slate-200">
+                {user.photoURL ? (
+                  <img src={user.photoURL} alt="avatar" className="w-full h-full object-cover" />
+                ) : (
+                  <User size={20} className="text-slate-400" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold truncate">{user.displayName}</p>
+                <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">{profile?.role || 'Участник'}</p>
+              </div>
+              <button 
+                onClick={handleLogout}
+                className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+              >
+                <LogOut size={18} />
+              </button>
+            </div>
+            {isAdmin && (
+              <button 
+                onClick={() => setView('admin')}
+                className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-amber-50 text-amber-700 rounded-2xl font-bold text-sm border border-amber-100 hover:bg-amber-100 transition-all"
+              >
+                <ShieldCheck size={18} />
+                <span>Админ</span>
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <button 
+              onClick={handleLogin}
+              className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-logo-blue text-white rounded-2xl font-bold text-sm hover:shadow-lg hover:shadow-logo-blue/20 transition-all active:scale-95"
+            >
+              <User size={18} />
+              <span>Войти</span>
+            </button>
+            <button 
+              disabled
+              className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-slate-50 text-slate-400 rounded-2xl font-bold text-sm border border-slate-100 cursor-not-allowed opacity-60"
+            >
+              <ShieldCheck size={18} />
+              <span>Админ</span>
+            </button>
+          </div>
+        )}
+      </div>
 
-        <div>
+      <div className="space-y-6">
           <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Период</h4>
           <div className="space-y-1">
             {PERIODS.map((p: string) => (
@@ -1234,14 +1180,15 @@ function SidebarContent({
             </button>
           </div>
         </div>
-      </div>
 
-      <button 
-        onClick={() => setView('profile')}
-        className="mt-auto w-full bg-slate-900 text-white py-4 rounded-2xl font-bold text-xs hover:bg-slate-800 transition-all shadow-lg shadow-slate-200"
-      >
-        Личный кабинет
-      </button>
+      {user && (
+        <button 
+          onClick={() => setView('profile')}
+          className="mt-auto w-full bg-slate-900 text-white py-4 rounded-2xl font-bold text-xs hover:bg-slate-800 transition-all shadow-lg shadow-slate-200"
+        >
+          Личный кабинет
+        </button>
+      )}
     </div>
   );
 }
@@ -2248,6 +2195,61 @@ function SidebarItem({ icon, label, active, onClick }: { icon: any, label: strin
   );
 }
 
+function AuthRequiredModal({ onClose, onLogin }: { onClose: () => void, onLogin: () => void }) {
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }} 
+      animate={{ opacity: 1 }} 
+      exit={{ opacity: 0 }} 
+      className="fixed inset-0 z-[500] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
+    >
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0, y: 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.9, opacity: 0, y: 20 }}
+        className="bg-white rounded-[40px] p-8 md:p-12 max-w-md w-full shadow-2xl relative text-center"
+      >
+        <button onClick={onClose} className="absolute top-6 right-6 p-2 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors">
+          <X size={20} />
+        </button>
+        
+        <div className="w-20 h-20 bg-logo-blue/10 rounded-3xl flex items-center justify-center mx-auto mb-8 text-logo-blue">
+          <ShieldCheck size={40} />
+        </div>
+        
+        <h3 className="text-2xl font-black mb-4">Вначале необходимо авторизоваться</h3>
+        
+        <div className="space-y-4 text-slate-600 mb-10">
+          <p className="text-sm leading-relaxed">
+            Чтобы записаться на мероприятие, пожалуйста, выполните следующие действия:
+          </p>
+          <ol className="text-sm text-left space-y-3 bg-slate-50 p-6 rounded-3xl border border-slate-100">
+            <li className="flex gap-3">
+              <span className="flex-shrink-0 w-6 h-6 bg-logo-blue text-white rounded-full flex items-center justify-center text-[10px] font-bold">1</span>
+              <span>Нажмите кнопку <strong>«Войти»</strong> в левом сайдбаре.</span>
+            </li>
+            <li className="flex gap-3">
+              <span className="flex-shrink-0 w-6 h-6 bg-logo-blue text-white rounded-full flex items-center justify-center text-[10px] font-bold">2</span>
+              <span>Пройдите авторизацию через Google.</span>
+            </li>
+            <li className="flex gap-3">
+              <span className="flex-shrink-0 w-6 h-6 bg-logo-blue text-white rounded-full flex items-center justify-center text-[10px] font-bold">3</span>
+              <span>После этого вернитесь и нажмите <strong>«Записаться»</strong> снова.</span>
+            </li>
+          </ol>
+        </div>
+        
+        <button 
+          onClick={onLogin}
+          className="w-full py-4 bg-logo-blue text-white rounded-2xl font-black text-sm hover:shadow-xl hover:shadow-logo-blue/20 transition-all active:scale-95"
+        >
+          Авторизоваться сейчас
+        </button>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 // --- New Public Components ---
 
 function EventInputPublic({ events, onBack }: { events: Event[], onBack: () => void }) {
@@ -2451,6 +2453,7 @@ function MiniCalendar({ events }: { events: Event[] }) {
     </div>
   );
 }
+
 
 function BlogRulesView() {
   return (
