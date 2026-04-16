@@ -163,8 +163,8 @@ interface UserProfile {
 }
 
 const BRANCHES = ['Все филиалы', 'Екатеринбург', 'Москва', 'Санкт-Петербург', 'Новосибирск', 'Казань'];
-const CATEGORIES = ['Семинары', 'Практики', 'Ретриты', 'Путешествия'];
-const PERIODS = ['Месяц', 'Квартал', 'Год'];
+const CATEGORIES = ['Семинары', 'Практики', 'Ретриты', 'Путешествия', 'все направления'];
+const PERIODS = ['Месяц', 'Квартал', 'Год', 'произвольный'];
 
 function getEventDate(startTime: any): Date {
   if (!startTime) return new Date();
@@ -662,27 +662,31 @@ function AppContent() {
       const matchesSpeaker = (event.speakerName || '').toLowerCase().includes(filterSpeaker.toLowerCase());
       const matchesLocation = (event.location || '').toLowerCase().includes(filterLocation.toLowerCase());
       const matchesBranch = filterBranch === 'Все филиалы' || event.branch === filterBranch;
-      const matchesCategory = filterCategory === 'Seminars' ? event.category === 'Семинар' :
-                             filterCategory === 'Practices' ? event.category === 'Практика' :
-                             filterCategory === 'Retreats' ? event.category === 'Ретрит' :
-                             filterCategory === 'Travels' ? event.category === 'Путешествие' : true;
+      const matchesCategory = filterCategory === 'Семинары' ? event.category === 'Семинар' :
+                             filterCategory === 'Практики' ? event.category === 'Практика' :
+                             filterCategory === 'Ретриты' ? event.category === 'Ретрит' :
+                             filterCategory === 'Путешествия' ? event.category === 'Путешествие' : 
+                             filterCategory === 'все направления' ? true : true;
       
       let matchesPeriod = true;
       const eventTime = eventDate.getTime();
       const anchorTime = sessionAnchorDate.getTime();
 
-      if (filterPeriod === 'Month') {
+      if (filterPeriod === 'Месяц') {
         const oneMonthLater = new Date(sessionAnchorDate);
         oneMonthLater.setMonth(oneMonthLater.getMonth() + 1);
         matchesPeriod = eventTime >= anchorTime && eventTime < oneMonthLater.getTime();
-      } else if (filterPeriod === 'Quarter') {
+      } else if (filterPeriod === 'Квартал') {
         const threeMonthsLater = new Date(sessionAnchorDate);
         threeMonthsLater.setMonth(threeMonthsLater.getMonth() + 3);
         matchesPeriod = eventTime >= anchorTime && eventTime < threeMonthsLater.getTime();
-      } else if (filterPeriod === 'Year') {
+      } else if (filterPeriod === 'Год') {
         const twelveMonthsLater = new Date(sessionAnchorDate);
         twelveMonthsLater.setFullYear(twelveMonthsLater.getFullYear() + 1);
         matchesPeriod = eventTime >= anchorTime && eventTime < twelveMonthsLater.getTime();
+      } else if (filterPeriod === 'произвольный') {
+        // When custom is selected, we rely on the matchesDate logic below
+        matchesPeriod = true;
       }
       
       let matchesDate = true;
@@ -742,7 +746,7 @@ function AppContent() {
             <MenuIcon size={24} />
           </button>
           <Logo className="w-10 h-10 md:w-14 md:h-14 shrink-0" onClick={() => setView('schedule')} />
-          <h1 className="flex-1 text-2xl md:text-6xl font-black uppercase tracking-tighter text-orange-500 leading-none cursor-pointer truncate py-2" onClick={() => setView('schedule')}>
+          <h1 className="flex-1 text-[clamp(1.5rem,5vw,4rem)] font-black uppercase tracking-tighter text-orange-500 leading-none cursor-pointer truncate py-2" onClick={() => setView('schedule')}>
             Академия Развития Человека
           </h1>
         </div>
@@ -1040,13 +1044,6 @@ function SidebarContent({
               <User size={18} />
               <span>Войти</span>
             </button>
-            <button 
-              disabled
-              className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-slate-50 text-slate-400 rounded-2xl font-bold text-sm border border-slate-100 cursor-not-allowed opacity-60"
-            >
-              <ShieldCheck size={18} />
-              <span>Админ</span>
-            </button>
           </div>
         )}
       </div>
@@ -1057,13 +1054,46 @@ function SidebarContent({
             {PERIODS.map((p: string) => (
               <button 
                 key={p}
-                onClick={() => setFilterPeriod(p)}
+                onClick={() => {
+                  setFilterPeriod(p);
+                  if (p !== 'произвольный') {
+                    setFilterDateFrom('');
+                    setFilterDateTo('');
+                  }
+                }}
                 className={`w-full text-left px-4 py-2 rounded-xl text-sm font-bold transition-all ${filterPeriod === p ? 'bg-slate-100 text-logo-blue border border-slate-200' : 'text-slate-600 hover:bg-slate-50'}`}
               >
                 {p}
               </button>
             ))}
           </div>
+
+          {filterPeriod === 'произвольный' && (
+            <motion.div 
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className="mt-4 p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3"
+            >
+              <div className="space-y-1">
+                <label className="text-[9px] font-black uppercase text-slate-400 ml-1">От</label>
+                <input 
+                  type="date"
+                  value={filterDateFrom}
+                  onChange={(e) => setFilterDateFrom(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 ring-logo-blue outline-none"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[9px] font-black uppercase text-slate-400 ml-1">До</label>
+                <input 
+                  type="date"
+                  value={filterDateTo}
+                  onChange={(e) => setFilterDateTo(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 ring-logo-blue outline-none"
+                />
+              </div>
+            </motion.div>
+          )}
         </div>
 
         <div>
@@ -1129,26 +1159,6 @@ function SidebarContent({
               onChange={(e) => setFilterLocation(e.target.value)}
               className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 ring-logo-blue outline-none"
             />
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Диапазон дат</label>
-            <div className="grid grid-cols-2 gap-2">
-              <input 
-                type="date"
-                value={filterDateFrom}
-                onChange={(e) => setFilterDateFrom(e.target.value)}
-                className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold focus:ring-2 ring-logo-blue outline-none"
-                placeholder="От"
-              />
-              <input 
-                type="date"
-                value={filterDateTo}
-                onChange={(e) => setFilterDateTo(e.target.value)}
-                className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold focus:ring-2 ring-logo-blue outline-none"
-                placeholder="До"
-              />
-            </div>
           </div>
 
           {(filterTitle || filterSpeaker || filterDateFrom || filterDateTo || filterLocation || filterBranch !== 'Все филиалы') && (
