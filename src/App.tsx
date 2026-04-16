@@ -16,7 +16,7 @@ import {
   Pie
 } from 'recharts';
 import { 
-  Calendar, 
+  Calendar as CalendarIcon, 
   User, 
   LogOut, 
   Mic, 
@@ -43,7 +43,8 @@ import {
   BookOpen,
   BarChart3,
   PieChart as PieChartIcon,
-  Activity
+  Activity,
+  Eye
 } from 'lucide-react';
 import { 
   signInWithPopup, 
@@ -886,7 +887,7 @@ function AppContent() {
         {view === 'admin' && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white p-4 md:p-12 overflow-y-auto">
             <button onClick={() => setView('schedule')} className="absolute top-4 right-4 md:top-8 md:right-8 p-3 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors z-10"><X size={24} /></button>
-            <AdminPanel onBack={() => setView('schedule')} events={events} financeRecords={financeRecords} participantsCount={participantsCount} />
+            <AdminPanel events={events} financeRecords={financeRecords} participantsCount={participantsCount} />
           </motion.div>
         )}
         {view === 'profile' && (
@@ -1268,7 +1269,7 @@ function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
         {event.sessionsCount && event.sessionsCount > 1 && (
           <div className="mt-4 pt-4 border-t border-slate-50">
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-              <Calendar size={12} /> Расписание занятий ({event.sessionsCount})
+              <CalendarIcon size={12} /> Расписание занятий ({event.sessionsCount})
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {Array.from({ length: event.sessionsCount }).map((_, idx) => {
@@ -1312,7 +1313,7 @@ function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
   );
 }
 
-function AdminPanel({ onBack, events, financeRecords, participantsCount }: { onBack: () => void, events: Event[], financeRecords: FinanceRecord[], participantsCount: number }) {
+function AdminPanel({ events, financeRecords, participantsCount }: { events: Event[], financeRecords: FinanceRecord[], participantsCount: number }) {
   const [subView, setSubView] = useState<'events' | 'finance' | 'analytics'>('events');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -1468,11 +1469,8 @@ function AdminPanel({ onBack, events, financeRecords, participantsCount }: { onB
 
   return (
     <div className="max-w-4xl mx-auto p-8">
-      <div className="flex items-center justify-between mb-8">
+      <div className="mb-8">
         <h2 className="text-4xl font-black tracking-tight">Управление системой</h2>
-        <button onClick={onBack} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors">
-          <X size={24} />
-        </button>
       </div>
 
       <div className="flex gap-4 mb-12 overflow-x-auto pb-2 scrollbar-hide">
@@ -1509,252 +1507,302 @@ function AdminPanel({ onBack, events, financeRecords, participantsCount }: { onB
       </div>
 
       {subView === 'events' && (
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-12">
-        <div className="bg-white rounded-[40px] p-10 border border-slate-100 shadow-2xl shadow-slate-200/50">
-          <h3 className="text-2xl font-black mb-8 flex items-center gap-3">
-            <Plus className="text-logo-blue" /> Новое событие
-          </h3>
-
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="space-y-2">
-              <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Название события</label>
-              <div className="relative">
-                <input 
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
-                  placeholder="Введите название..."
-                  required
-                />
-                <button 
-                  type="button"
-                  onClick={startVoiceInput}
-                  className={`absolute right-4 top-1/2 -translate-y-1/2 p-2 rounded-xl transition-all ${
-                    isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
-                  }`}
-                >
-                  <Mic size={18} />
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Спикер</label>
-                <input 
-                  type="text"
-                  value={speakerName}
-                  onChange={(e) => setSpeakerName(e.target.value)}
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
-                  placeholder="Имя спикера..."
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Дата и время</label>
-                <input 
-                  type="datetime-local"
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Длительность (ч)</label>
-                <input 
-                  type="number"
-                  value={duration}
-                  onChange={(e) => setDuration(Number(e.target.value))}
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
-                  min="0.5"
-                  step="0.5"
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Локация</label>
-                <div className="relative">
+        <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          {/* Block 1: Публичная информация */}
+          <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-6 flex flex-col">
+            <h3 className="text-xl font-black flex items-center gap-3">
+              <Eye className="text-logo-blue" /> Публичная информация
+            </h3>
+            
+            <div className="space-y-4 flex-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Название</label>
+                  <div className="relative">
+                    <input 
+                      type="text"
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all text-sm"
+                      placeholder="Название..."
+                      required
+                    />
+                    <button 
+                      type="button"
+                      onClick={startVoiceInput}
+                      className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-all ${
+                        isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                      }`}
+                    >
+                      <Mic size={14} />
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Спикер</label>
                   <input 
                     type="text"
-                    list="admin-locations"
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
-                    placeholder="Выберите или введите..."
+                    value={speakerName}
+                    onChange={(e) => setSpeakerName(e.target.value)}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all text-sm"
+                    placeholder="Имя..."
                     required
                   />
-                  <datalist id="admin-locations">
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Дата</label>
+                  <input 
+                    type="datetime-local"
+                    value={startTime}
+                    onChange={(e) => setStartTime(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all text-[10px]"
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Час(ы)</label>
+                  <input 
+                    type="number"
+                    value={duration}
+                    onChange={(e) => setDuration(Number(e.target.value))}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all text-sm"
+                    min="0.5"
+                    step="0.5"
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Занятий</label>
+                  <input 
+                    type="number"
+                    value={sessionsCount}
+                    onChange={(e) => setSessionsCount(Number(e.target.value))}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all text-sm"
+                    min="1"
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Цена (₽)</label>
+                  <input 
+                    type="number"
+                    value={price}
+                    onChange={(e) => setPrice(Number(e.target.value))}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all text-sm"
+                    min="0"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Филиал</label>
+                  <select 
+                    value={branch}
+                    onChange={(e) => setBranch(e.target.value)}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold outline-none text-sm appearance-none cursor-pointer"
+                  >
+                    {BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Категория</label>
+                  <select 
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold outline-none text-sm appearance-none cursor-pointer"
+                  >
+                    {CATEGORIES.filter(c => c !== 'Все направления').map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Формат</label>
+                  <select 
+                    value={format}
+                    onChange={(e) => setFormat(e.target.value as any)}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold outline-none text-sm appearance-none cursor-pointer"
+                  >
+                    <option value="Оффлайн">Оффлайн</option>
+                    <option value="Онлайн">Онлайн</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Локация</label>
+                  <input 
+                    type="text"
+                    list="admin-locations-v3"
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all text-sm"
+                    placeholder="Локация..."
+                    required
+                  />
+                  <datalist id="admin-locations-v3">
                     {locations.map(loc => <option key={loc} value={loc} />)}
                   </datalist>
                 </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Скидки</label>
+                  <input 
+                    type="text"
+                    value={discounts}
+                    onChange={(e) => setDiscounts(e.target.value)}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all text-sm"
+                    placeholder="Напр. 10%..."
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Допуск</label>
+                  <input 
+                    type="text"
+                    value={access}
+                    onChange={(e) => setAccess(e.target.value)}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all text-sm"
+                    placeholder="Допуск..."
+                  />
+                </div>
               </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Филиал</label>
-                <select 
-                  value={branch}
-                  onChange={(e) => setBranch(e.target.value)}
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all appearance-none cursor-pointer"
-                >
-                  {BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Кол-во занятий</label>
-                <input 
-                  type="number"
-                  value={sessionsCount}
-                  onChange={(e) => setSessionsCount(Number(e.target.value))}
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
-                  min="1"
-                  required
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Описание</label>
+                <textarea 
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold outline-none text-sm min-h-[60px]"
+                  placeholder="Описание..."
                 />
               </div>
             </div>
+          </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Формат</label>
-                <select 
-                  value={format}
-                  onChange={(e) => setFormat(e.target.value as any)}
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all appearance-none cursor-pointer"
-                >
-                  <option value="Оффлайн">Оффлайн</option>
-                  <option value="Онлайн">Онлайн</option>
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Категория</label>
-                <select 
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all appearance-none cursor-pointer"
-                >
-                  {CATEGORIES.filter(c => c !== 'Все направления').map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-            </div>
+          {/* Block 2: Для администраторов */}
+          <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-8 flex flex-col">
+            <h3 className="text-xl font-black flex items-center gap-3">
+              <ShieldCheck className="text-amber-500" /> Служебная информация
+            </h3>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Цена (₽)</label>
-                <input 
-                  type="number"
-                  value={price}
-                  onChange={(e) => setPrice(Number(e.target.value))}
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
-                  min="0"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Скидки</label>
-                <input 
-                  type="text"
-                  value={discounts}
-                  onChange={(e) => setDiscounts(e.target.value)}
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
-                  placeholder="Напр. '10% до 01.05'..."
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Допуск</label>
-                <input 
-                  type="text"
-                  value={access}
-                  onChange={(e) => setAccess(e.target.value)}
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
-                  placeholder="Напр. 'Все желающие'..."
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Аренда (₽)</label>
-                <input 
-                  type="number"
-                  value={rentExpense}
-                  onChange={(e) => setRentExpense(Number(e.target.value))}
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
-                  min="0"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Гонорар спикера (₽)</label>
-                <input 
-                  type="number"
-                  value={speakerFee}
-                  onChange={(e) => setSpeakerFee(Number(e.target.value))}
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
-                  min="0"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Описание</label>
-              <textarea 
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all min-h-[120px]"
-                placeholder="Краткое описание события..."
-              />
-            </div>
-
-            {conflicts.length > 0 && (
-              <div className="p-6 bg-amber-50 border border-amber-200 rounded-3xl space-y-4">
-                <div className="flex items-center gap-3 text-amber-700 font-black uppercase tracking-widest text-[10px]">
-                  <AlertCircle size={16} /> Обнаружены конфликты
+            <div className="space-y-6 flex-1">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Аренда (₽)</label>
+                  <input 
+                    type="number"
+                    value={rentExpense}
+                    onChange={(e) => setRentExpense(Number(e.target.value))}
+                    className="w-full px-5 py-3 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
+                    min="0"
+                  />
                 </div>
                 <div className="space-y-2">
-                  {conflicts.map(c => (
-                    <div key={c.id} className="text-xs font-bold text-amber-800 bg-white/50 p-3 rounded-xl border border-amber-100">
-                      ⚠️ {c.title} ({getEventDate(c.startTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {c.endTime ? getEventDate(c.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '...'})
-                    </div>
-                  ))}
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Гонорар (₽)</label>
+                  <input 
+                    type="number"
+                    value={speakerFee}
+                    onChange={(e) => setSpeakerFee(Number(e.target.value))}
+                    className="w-full px-5 py-3 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
+                    min="0"
+                  />
                 </div>
-                <p className="text-[10px] font-bold text-amber-600">
-                  Нажмите «Опубликовать» еще раз, чтобы проигнорировать и сохранить.
-                </p>
-                <button 
-                  type="button"
-                  onClick={() => setConflicts([])}
-                  className="text-[10px] font-black uppercase tracking-widest text-amber-700 hover:underline"
-                >
-                  Изменить данные
-                </button>
               </div>
-            )}
+
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Макс. мест</label>
+                <input 
+                  type="number"
+                  value={maxParticipants}
+                  onChange={(e) => setMaxParticipants(Number(e.target.value))}
+                  className="w-full px-5 py-3 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
+                  min="1"
+                />
+              </div>
+
+              {conflicts.length > 0 && (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl space-y-2">
+                  <div className="flex items-center gap-2 text-amber-700 font-black uppercase tracking-widest text-[9px]">
+                    <AlertCircle size={14} /> Конфликт расписания
+                  </div>
+                  <div className="space-y-1">
+                    {conflicts.map(c => (
+                      <div key={c.id} className="text-[10px] font-bold text-amber-800">
+                        • {c.title}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
 
             <button 
               type="submit"
-              className={`w-full py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-xl ${
+              className={`w-full py-4 rounded-xl font-black uppercase tracking-widest transition-all shadow-lg ${
                 conflicts.length > 0 
-                  ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-200' 
-                  : 'bg-slate-900 hover:bg-slate-800 text-white shadow-slate-200'
+                  ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-100' 
+                  : 'bg-slate-900 hover:bg-slate-800 text-white shadow-slate-100'
               }`}
             >
-              {status || (conflicts.length > 0 ? "Проигнорировать и сохранить" : "Опубликовать событие")}
+              {status || (conflicts.length > 0 ? "Игнорировать" : "Сохранить")}
             </button>
-          </form>
-        </div>
+          </div>
 
-        <div className="space-y-8">
-          <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50">
-            <h4 className="text-lg font-black mb-6">Статистика</h4>
-            <div className="space-y-4">
-              <StatCard label="Всего участников" value={participantsCount.toLocaleString()} />
-              <StatCard label="Выручка" value={`${financeRecords.filter(r => r.type === 'income').reduce((sum, r) => sum + r.amount, 0).toLocaleString()} ₽`} />
-              <StatCard label="Активные события" value={events.filter(e => e.status !== 'completed' && e.status !== 'cancelled').length.toString()} />
+          {/* Block 3: Аналитика */}
+          <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-6">
+            <h3 className="text-xl font-black flex items-center gap-3">
+              <PieChartIcon className="text-indigo-500" /> Аналитика
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-[9px] font-black uppercase text-slate-400 mb-1">Участники</p>
+                <p className="text-xl font-black">{participantsCount}</p>
+              </div>
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-[9px] font-black uppercase text-slate-400 mb-1">Активные</p>
+                <p className="text-xl font-black">{events.filter(e => e.status === 'active' || e.status === 'planned').length}</p>
+              </div>
+              <div className="col-span-2 p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
+                <p className="text-[9px] font-black uppercase text-indigo-400 mb-1">Выручка (общая)</p>
+                <p className="text-2xl font-black text-indigo-700">
+                  {financeRecords.filter(r => r.type === 'income').reduce((sum, r) => sum + r.amount, 0).toLocaleString()} ₽
+                </p>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+
+          {/* Block 4: Календарь */}
+          <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-6 overflow-hidden">
+            <h3 className="text-xl font-black flex items-center gap-3">
+              <CalendarIcon className="text-emerald-500" /> Календарь
+            </h3>
+            <div className="flex gap-3 overflow-x-auto pb-4 scrollbar-hide">
+              {Array.from({ length: 30 }, (_, i) => {
+                const d = new Date();
+                d.setDate(d.getDate() + i);
+                const isToday = i === 0;
+                return (
+                  <div key={i} className={`shrink-0 w-14 h-20 flex flex-col items-center justify-center rounded-[20px] border transition-all ${
+                    isToday ? 'bg-slate-900 border-slate-900 text-white shadow-lg' : 'bg-slate-50 border-slate-100 text-slate-600'
+                  }`}>
+                    <span className="text-[9px] font-black uppercase opacity-60 mb-1">
+                      {d.toLocaleDateString('ru-RU', { weekday: 'short' })}
+                    </span>
+                    <span className="text-lg font-black">{d.getDate()}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-2 p-4 bg-emerald-50 rounded-2xl border border-emerald-100 flex items-center gap-3">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest">
+                График на ближайшие 30 дней
+              </p>
+            </div>
+          </div>
+        </form>
       )}
       {subView === 'finance' && (
         <FinanceView events={events} records={financeRecords} />
