@@ -303,6 +303,19 @@ function AppContent() {
   const [referrerId, setReferrerId] = useState<string | null>(null);
   const [registeringEventId, setRegisteringEventId] = useState<string | null>(null);
 
+  // Body scroll lock for overlays
+  useEffect(() => {
+    const isOverlayOpen = view !== 'schedule' || showAuthModal || isMobileMenuOpen;
+    if (isOverlayOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [view, showAuthModal, isMobileMenuOpen]);
+
   // Capture Referral ID from URL
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -339,7 +352,7 @@ function AppContent() {
               email: u.email || '',
               role: u.email === 'il17184@gmail.com' ? 'admin' : 'participant',
               bonusBalance: 0,
-              referrerId: referrerId || undefined
+              ...(referrerId ? { referrerId } : {})
             };
             await setDoc(doc(db, 'users', u.uid), {
               ...newProfile,
@@ -744,7 +757,7 @@ function AppContent() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8F9FB] font-sans text-slate-950 flex flex-col">
+    <div className="h-screen bg-[#F8F9FB] font-sans text-slate-950 flex flex-col overflow-hidden">
       {/* --- HEADER --- */}
       <header className="bg-white/80 backdrop-blur-xl border-b border-slate-200/60 sticky top-0 z-[100] shadow-sm overflow-hidden">
         <div className="w-full flex items-center px-4 md:px-[5%] py-3 md:py-4 gap-4">
