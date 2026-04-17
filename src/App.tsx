@@ -1486,10 +1486,10 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
         <h2 className="text-4xl font-black tracking-tight">Управление системой</h2>
       </div>
 
-      <div className="flex gap-4 mb-12 overflow-x-auto pb-2 scrollbar-hide">
+      <div className="flex flex-col md:flex-row gap-4 mb-12">
         <button 
           onClick={() => setSubView('events')}
-          className={`px-6 py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all whitespace-nowrap ${
+          className={`px-6 py-4 md:py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all w-full md:w-auto ${
             subView === 'events' 
               ? 'bg-slate-900 text-white shadow-lg shadow-slate-200' 
               : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
@@ -1499,7 +1499,7 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
         </button>
         <button 
           onClick={() => setSubView('finance')}
-          className={`px-6 py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all whitespace-nowrap ${
+          className={`px-6 py-4 md:py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all w-full md:w-auto ${
             subView === 'finance' 
               ? 'bg-slate-900 text-white shadow-lg shadow-slate-200' 
               : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
@@ -1509,7 +1509,7 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
         </button>
         <button 
           onClick={() => setSubView('analytics')}
-          className={`px-6 py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all whitespace-nowrap ${
+          className={`px-6 py-4 md:py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all w-full md:w-auto ${
             subView === 'analytics' 
               ? 'bg-slate-900 text-white shadow-lg shadow-slate-200' 
               : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
