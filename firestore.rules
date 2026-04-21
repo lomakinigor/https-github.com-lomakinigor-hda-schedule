@@ -87,7 +87,7 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && (
-        getUserData().role == 'admin' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'admin') ||
         (request.auth.token.email == "il17184@gmail.com" && request.auth.token.email_verified == true)
       );
     }
@@ -126,16 +126,29 @@ service cloud.firestore {
              data.createdAt is timestamp;
     }
 
+    function isValidRegistration(data) {
+      return data.keys().hasAll(['userId', 'eventId', 'status', 'paid', 'totalPrice', 'amountPaid', 'paymentStatus', 'registrationDate']) &&
+             data.userId is string &&
+             data.eventId is string &&
+             data.status in ['registered', 'attended', 'cancelled'] &&
+             data.paid is bool &&
+             data.totalPrice is number &&
+             data.amountPaid is number &&
+             data.paymentStatus in ['unpaid', 'partial', 'paid'] &&
+             (!('participantName' in data) || data.participantName is string) &&
+             data.registrationDate is timestamp;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
 
     // Users collection
     match /users/{userId} {
-      allow read: if isAuthenticated(); // Allow reading other users for mentor/referrer info
-      allow create: if (isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'participant' || isAdmin())) || true; // Temporarily allow public creation
+      allow read: if isAuthenticated(); 
+      allow create: if (isAuthenticated() && isOwner(userId)) || isAdmin();
       allow update: if isAuthenticated() && (
-        (isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role || isAdmin())) ||
+        (isOwner(userId) && (request.resource.data.role == resource.data.role || isAdmin())) ||
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['bonusBalance']) && request.resource.data.bonusBalance > resource.data.bonusBalance) ||
         isAdmin()
       );
@@ -149,17 +162,31 @@ service cloud.firestore {
 
     // Events collection
     match /events/{eventId} {
-      allow read: if true; // Publicly readable schedule
-      allow create: if isAdmin() || isSpeaker() || true; // Temporarily allow public creation
+      allow read: if true; 
+      allow create: if isAdmin() || isSpeaker();
       allow update: if isAdmin() || isSpeaker() || (isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['registeredCount']));
       allow delete: if isAdmin();
     }
 
     // Registrations collection
     match /registrations/{regId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin() || (isSpeaker() && get(/databases/$(database)/documents/events/$(resource.data.eventId)).data.speakerId == request.auth.uid));
-      allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
-      allow update: if isAdmin() || (isAuthenticated() && isOwner(resource.data.userId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']));
+      allow get: if isAuthenticated() && (
+        isAdmin() || 
+        (resource != null && resource.data.userId == request.auth.uid) ||
+        (resource == null && regId.size() >= request.auth.uid.size() && regId.substring(0, request.auth.uid.size()) == request.auth.uid)
+      );
+      allow list: if isAuthenticated() && (
+        isAdmin() || 
+        (resource.data.userId == request.auth.uid)
+      );
+      allow create: if isAuthenticated() && 
+                    request.resource.data.userId == request.auth.uid &&
+                    isValidRegistration(request.resource.data);
+      allow update: if isAdmin() || (
+        isAuthenticated() && 
+        resource.data.userId == request.auth.uid && 
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+      );
       allow delete: if isAdmin();
     }
 

@@ -33,10 +33,13 @@ import {
   LayoutDashboard,
   Settings,
   Search,
+  Edit3,
   X,
   Menu as MenuIcon,
   ShieldCheck,
+  FileText,
   ChevronDown,
+  ChevronUp,
   AlertCircle,
   Copy,
   Check,
@@ -126,6 +129,7 @@ interface Event {
   totalRevenue?: number;
   totalExpenses?: number;
   netProfit?: number;
+  additionalExpenses?: number;
 }
 
 interface Registration {
@@ -137,6 +141,8 @@ interface Registration {
   totalPrice: number;
   amountPaid: number;
   paymentStatus: 'unpaid' | 'partial' | 'paid';
+  paymentMethod?: 'cash' | 'card';
+  participantName?: string;
   registrationDate: any;
 }
 
@@ -158,13 +164,17 @@ interface UserProfile {
   role: 'admin' | 'speaker' | 'participant';
   displayName: string;
   email: string;
+  lastName?: string;
+  firstName?: string;
+  patronymic?: string;
+  academyStatus?: 'Мастер' | 'Магистр' | 'Ученик' | 'Новый' | 'Постоянный' | 'Слушатель' | 'Студент' | 'Выпускник';
   branch?: string;
   bonusBalance?: number;
   referrerId?: string;
 }
 
 const BRANCHES = ['Все филиалы', 'Екатеринбург', 'Москва', 'Санкт-Петербург', 'Новосибирск', 'Казань'];
-const CATEGORIES = ['Семинары', 'Практики', 'Ретриты', 'Путешествия', 'Все направления'];
+const CATEGORIES = ['Семинары', 'Практики', 'Вебинары', 'Курсы', 'Ретриты', 'Путешествия', 'Все направления'];
 const PERIODS = ['Месяц', 'Квартал', 'Год', 'Произвольный'];
 
 function getEventDate(startTime: any): Date {
@@ -263,12 +273,19 @@ function AppContent() {
   const [view, setView] = useState<'schedule' | 'admin' | 'profile' | 'event-input' | 'participant-card'>('schedule');
   const [events, setEvents] = useState<Event[]>([]);
   const [financeRecords, setFinanceRecords] = useState<FinanceRecord[]>([]);
+  const [registrations, setRegistrations] = useState<Registration[]>([]);
+  const [participants, setParticipants] = useState<any[]>([]);
   const [participantsCount, setParticipantsCount] = useState(0);
+  const [allUserProfiles, setAllUserProfiles] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [calendarView, setCalendarView] = useState<'List' | 'Calendar'>('List');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showRulesModal, setShowRulesModal] = useState(false);
+  const [pendingEventForRules, setPendingEventForRules] = useState<Event | null>(null);
+  const [showUserFinanceModal, setShowUserFinanceModal] = useState(false);
+  const [selectedEventForFinance, setSelectedEventForFinance] = useState<Event | null>(null);
   const [sessionAnchorDate] = useState(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -412,15 +429,18 @@ function AppContent() {
     }
   }, [isAdmin]);
 
-  // Firestore Listener for Participants Count
+  // Firestore Listener for Participants
   useEffect(() => {
     if (!isAdmin) {
+      setParticipants([]);
       setParticipantsCount(0);
       return;
     }
     try {
       const q = query(collection(db, 'participants'));
       const unsubscribe = onSnapshot(q, (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setParticipants(data);
         setParticipantsCount(snapshot.size);
       }, (err) => {
         handleFirestoreError(err, OperationType.LIST, 'participants');
@@ -431,6 +451,51 @@ function AppContent() {
       return () => {};
     }
   }, [isAdmin]);
+
+  // Firestore Listener for All User Profiles (Admin Only)
+  useEffect(() => {
+    if (!isAdmin) {
+      setAllUserProfiles([]);
+      return;
+    }
+    try {
+      const q = query(collection(db, 'users'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const users = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+        setAllUserProfiles(users);
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'users');
+      });
+      return unsubscribe;
+    } catch (err) {
+      logger.log('Users Listener Error', err);
+      return () => {};
+    }
+  }, [isAdmin]);
+
+  // Firestore Listener for Registrations
+  useEffect(() => {
+    if (!user) {
+      setRegistrations([]);
+      return;
+    }
+    try {
+      const q = isAdmin 
+        ? query(collection(db, 'registrations'), orderBy('registrationDate', 'desc'))
+        : query(collection(db, 'registrations'), where('userId', '==', user.uid));
+        
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const regs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Registration));
+        setRegistrations(regs);
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'registrations');
+      });
+      return unsubscribe;
+    } catch (err) {
+      logger.log('Registrations Listener Error', err);
+      return () => {};
+    }
+  }, [user, isAdmin]);
 
   const seedMockData = async () => {
     const mockEvents = [
@@ -630,45 +695,43 @@ function AppContent() {
       return;
     }
 
-    setRegisteringEventId(event.id);
-    try {
-      // 1. Create registration
-      const regId = `${user.uid}_${event.id}`;
-      const regDoc = await getDoc(doc(db, 'registrations', regId));
-      
-      if (regDoc.exists()) {
-        alert('Вы уже записаны на это событие.');
-        return;
-      }
+    // Check if already registered
+    const existingReg = registrations.find(r => r.eventId === event.id && r.userId === user.uid);
+    if (existingReg) {
+      // Logic for existing registration click removed (now handled by specific sub-button)
+      return;
+    }
 
+    setPendingEventForRules(event);
+    setShowRulesModal(true);
+  };
+
+  const finalizeRegistration = async () => {
+    if (!pendingEventForRules || !user) return;
+    const event = pendingEventForRules;
+    setRegisteringEventId(event.id);
+    setShowRulesModal(false);
+    
+    try {
+      const regId = `${user.uid}_${event.id}`;
       await setDoc(doc(db, 'registrations', regId), {
         userId: user.uid,
         eventId: event.id,
+        participantName: user.displayName || 'Anonymous',
         status: 'registered',
-        paid: (event.price || 0) > 0,
+        paid: false,
         totalPrice: event.price || 0,
-        amountPaid: event.price || 0,
-        paymentStatus: 'paid',
+        amountPaid: 0,
+        paymentStatus: 'unpaid',
         registrationDate: serverTimestamp()
       });
 
-      // 2. Increment event count
       await updateDoc(doc(db, 'events', event.id), {
         registeredCount: increment(1)
       });
 
-      // 3. Referral Bonus Logic
-      if (profile.referrerId && (event.price || 0) > 0) {
-        const bonusAmount = Math.floor((event.price || 0) * 0.1);
-        if (bonusAmount > 0) {
-          await updateDoc(doc(db, 'users', profile.referrerId), {
-            bonusBalance: increment(bonusAmount)
-          });
-          logger.log(`Referral bonus of ${bonusAmount} awarded to ${profile.referrerId}`);
-        }
-      }
-
-      alert('Вы успешно записались на событие!');
+      setPendingEventForRules(null);
+      alert('Вы успешно записались на мероприятие!');
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `registrations/${user.uid}_${event.id}`);
     } finally {
@@ -684,11 +747,14 @@ function AppContent() {
       const matchesSpeaker = (event.speakerName || '').toLowerCase().includes(filterSpeaker.toLowerCase());
       const matchesLocation = (event.location || '').toLowerCase().includes(filterLocation.toLowerCase());
       const matchesBranch = filterBranch === 'Все филиалы' || event.branch === filterBranch;
-      const matchesCategory = filterCategory === 'Семинары' ? event.category === 'Семинар' :
-                             filterCategory === 'Практики' ? event.category === 'Практика' :
-                             filterCategory === 'Ретриты' ? event.category === 'Ретрит' :
-                             filterCategory === 'Путешествия' ? event.category === 'Путешествие' : 
-                             filterCategory === 'Все направления' ? true : true;
+      const matchesCategory = filterCategory === 'Все направления' || 
+                             event.category === filterCategory ||
+                             (filterCategory === 'Семинары' && event.category === 'Семинар') ||
+                             (filterCategory === 'Практики' && event.category === 'Практика') ||
+                             (filterCategory === 'Вебинары' && event.category === 'Вебинар') ||
+                             (filterCategory === 'Курсы' && event.category === 'Курс') ||
+                             (filterCategory === 'Ретриты' && event.category === 'Ретрит') ||
+                             (filterCategory === 'Путешествия' && event.category === 'Путешествие');
       
       let matchesPeriod = true;
       const eventTime = eventDate.getTime();
@@ -768,7 +834,7 @@ function AppContent() {
             <MenuIcon size={24} />
           </button>
           <Logo className="w-10 h-10 md:w-14 md:h-14 shrink-0" onClick={() => setView('schedule')} />
-          <h1 className="flex-1 text-[clamp(1.5rem,5vw,4rem)] font-black uppercase tracking-tighter text-orange-500 leading-none cursor-pointer truncate py-2" onClick={() => setView('schedule')}>
+          <h1 className="flex-1 text-[clamp(1.5rem,5vw,4rem)] font-black uppercase tracking-tighter text-blue-900 leading-none cursor-pointer truncate py-2" onClick={() => setView('schedule')}>
             Академия Развития Человека
           </h1>
         </div>
@@ -841,7 +907,14 @@ function AppContent() {
                         key={event.id} 
                         event={event} 
                         onRegister={() => handleRegister(event)}
+                        onShowFinance={() => { 
+                          setSelectedEventForFinance(event); 
+                          setShowUserFinanceModal(true); 
+                        }}
                         isRegistering={registeringEventId === event.id}
+                        isAdmin={isAdmin}
+                        registrations={registrations}
+                        financeRecords={financeRecords}
                       />
                     ))
                   ) : (
@@ -900,7 +973,14 @@ function AppContent() {
         {view === 'admin' && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white p-4 md:p-12 overflow-y-auto">
             <button onClick={() => setView('schedule')} className="absolute top-4 right-4 md:top-8 md:right-8 p-3 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors z-10"><X size={24} /></button>
-            <AdminPanel events={events} financeRecords={financeRecords} participantsCount={participantsCount} />
+            <AdminPanel 
+              events={events} 
+              financeRecords={financeRecords} 
+              registrations={registrations}
+              participantsCount={participantsCount}
+              allUserProfiles={allUserProfiles}
+              leads={participants}
+            />
           </motion.div>
         )}
         {view === 'profile' && (
@@ -941,6 +1021,126 @@ function AppContent() {
 
         {showAuthModal && (
           <AuthRequiredModal onClose={() => setShowAuthModal(false)} onLogin={() => { setShowAuthModal(false); handleLogin(); }} />
+        )}
+
+        {showRulesModal && pendingEventForRules && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className="bg-white rounded-[40px] p-10 max-w-lg w-full shadow-2xl relative overflow-hidden"
+            >
+              <div className="flex items-center gap-4 mb-6">
+                <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center">
+                  <FileText size={24} />
+                </div>
+                <h2 className="text-2xl font-black tracking-tight uppercase tracking-tighter">Правила участия</h2>
+              </div>
+              
+              <div className="space-y-4 max-h-[400px] overflow-y-auto pr-4 mb-8 text-slate-600 leading-relaxed font-semibold">
+                <p>Перед регистрацией на <strong>"{pendingEventForRules.title}"</strong> ознакомьтесь с правилами Академии:</p>
+                <ul className="space-y-3 list-disc pl-5">
+                  <li>Запись на мероприятие подтверждает ваше согласие с уставом.</li>
+                  <li>Оплата должна быть в полном объеме до начала занятия.</li>
+                  <li>Отмена участия возможна за 24 часа с сохранением оплаты на балансе.</li>
+                  <li>Все материалы Академии охраняются авторским правом.</li>
+                </ul>
+                <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 flex items-start gap-3 mt-6">
+                  <AlertCircle size={16} className="text-amber-500 mt-0.5 shrink-0" />
+                  <p className="text-[10px] text-amber-600 uppercase font-black tracking-widest">Внимание: нажатие кнопки регистрации означает полное принятие данных правил.</p>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                <button 
+                  onClick={finalizeRegistration}
+                  className="w-full py-5 bg-slate-900 text-white rounded-[24px] font-bold hover:bg-logo-blue transition-all shadow-xl shadow-slate-200"
+                >
+                  Принимаю и записываюсь
+                </button>
+                <button 
+                  onClick={() => { setShowRulesModal(false); setPendingEventForRules(null); }}
+                  className="w-full py-4 text-slate-400 font-bold hover:text-slate-600 transition-all"
+                >
+                  Отмена
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {showUserFinanceModal && selectedEventForFinance && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className="bg-white rounded-[40px] p-10 max-w-md w-full shadow-2xl relative"
+            >
+              <button 
+                onClick={() => setShowUserFinanceModal(false)}
+                className="absolute right-8 top-8 p-2 hover:bg-slate-50 rounded-xl"
+              >
+                <X size={20} className="text-slate-400" />
+              </button>
+
+              <div className="mb-8">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-2 h-2 rounded-full bg-logo-blue animate-pulse" />
+                  <p className="text-[10px] font-black uppercase text-logo-blue tracking-widest">Статус вашей записи</p>
+                </div>
+                <h2 className="text-2xl font-black leading-tight">{selectedEventForFinance.title}</h2>
+              </div>
+
+              {(() => {
+                const reg = registrations.find(r => r.eventId === selectedEventForFinance.id && r.userId === user?.uid);
+                if (!reg) return null;
+
+                const currentEventFinance = financeRecords.filter(f => f.eventId === selectedEventForFinance.id && f.userId === user?.uid);
+                const cashPaid = currentEventFinance.filter(f => f.category === 'Наличные' || f.description?.includes('наличными')).reduce((sum, f) => sum + f.amount, 0);
+                const cardPaid = currentEventFinance.filter(f => f.category === 'Безналично' || f.description?.includes('безнал')).reduce((sum, f) => sum + f.amount, 0);
+                const totalPaid = cashPaid + cardPaid;
+                const unpaid = Math.max(0, (selectedEventForFinance.price || 0) - totalPaid);
+
+                return (
+                  <div className="space-y-6">
+                    <div className={`p-6 rounded-3xl border flex items-center justify-between ${
+                      reg.paymentStatus === 'paid' ? 'bg-green-50 border-green-100 text-green-700' :
+                      reg.paymentStatus === 'partial' ? 'bg-yellow-50 border-yellow-100 text-yellow-700' :
+                      'bg-red-50 border-red-100 text-red-700'
+                    }`}>
+                      <div>
+                        <p className="text-[10px] font-black uppercase opacity-60">Финансовый итог</p>
+                        <p className="text-xl font-black uppercase tracking-tighter">
+                          {reg.paymentStatus === 'paid' ? 'Оплачено полностью' :
+                           reg.paymentStatus === 'partial' ? 'Оплачено частично' : 'Не оплачено'}
+                        </p>
+                      </div>
+                      <ShieldCheck size={32} />
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between p-5 bg-slate-50 rounded-2xl border border-slate-100 hover:border-slate-200 transition-colors">
+                        <span className="text-xs font-black uppercase text-slate-400">Наличные</span>
+                        <span className="text-lg font-black text-slate-900">{cashPaid.toLocaleString()} ₽</span>
+                      </div>
+                      <div className="flex items-center justify-between p-5 bg-slate-50 rounded-2xl border border-slate-100 hover:border-slate-200 transition-colors">
+                        <span className="text-xs font-black uppercase text-slate-400">Безналично</span>
+                        <span className="text-lg font-black text-slate-900">{cardPaid.toLocaleString()} ₽</span>
+                      </div>
+                      <div className="flex items-center justify-between p-5 bg-red-50 rounded-2xl border border-red-100 hover:border-red-200 transition-colors">
+                        <span className="text-xs font-black uppercase text-red-500">К оплате</span>
+                        <span className="text-lg font-black text-red-600">{unpaid.toLocaleString()} ₽</span>
+                      </div>
+                    </div>
+
+                    <p className="text-[10px] text-center text-slate-400 font-bold uppercase tracking-widest pt-2">
+                      Для проведения оплаты обратитесь к администратору
+                    </p>
+                  </div>
+                );
+              })()}
+            </motion.div>
+          </div>
         )}
 
         {/* --- MOBILE MENU OVERLAY --- */}
@@ -1229,21 +1429,205 @@ interface EventRowProps {
   key?: string | number;
   event: Event;
   onRegister: () => void | Promise<void>;
+  onShowFinance?: () => void;
   isRegistering: boolean;
+  isAdmin?: boolean;
+  registrations?: Registration[];
+  financeRecords?: FinanceRecord[];
 }
 
-function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
+function EventRow({ 
+  event, 
+  onRegister, 
+  onShowFinance,
+  isRegistering, 
+  isAdmin, 
+  registrations = [], 
+  financeRecords = [] 
+}: EventRowProps) {
+  const [isListening, setIsListening] = useState(false);
+  const [showAdminInfo, setShowAdminInfo] = useState(false);
   const date = getEventDate(event.startTime);
   const day = date.getDate().toString().padStart(2, '0');
   const month = date.toLocaleString('ru', { month: 'short' });
   const registeredCount = event.registeredCount || 0;
   const isFull = event.maxParticipants && registeredCount >= event.maxParticipants;
 
+  const currentUserId = auth.currentUser?.uid;
+  const userRegistration = registrations.find(r => r.eventId === event.id && r.userId === currentUserId);
+  const isUserRegistered = !!userRegistration;
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'paid': return 'bg-green-500';
+      case 'partial': return 'bg-yellow-500';
+      case 'unpaid': return 'bg-red-500';
+      default: return 'bg-slate-300';
+    }
+  };
+
+  // Служебная информация (Computed)
+  const eventRegs = registrations.filter(r => r.eventId === event.id);
+  const totalRegistered = eventRegs.filter(r => r.status !== 'cancelled').length;
+  const totalPaid = eventRegs.filter(r => r.paymentStatus === 'paid').length;
+  const cashTotal = eventRegs.reduce((sum, r) => sum + (r.paymentMethod === 'cash' ? r.amountPaid : 0), 0);
+  const cardTotal = eventRegs.reduce((sum, r) => sum + (r.paymentMethod === 'card' ? r.amountPaid : 0), 0);
+  
+  // Дополнительные расходы (Manual + Computed if any)
+  const additionalExpenses = (event.additionalExpenses || 0) + financeRecords
+    .filter(f => f.eventId === event.id && f.type === 'expense')
+    .reduce((sum, r) => sum + r.amount, 0);
+
   return (
     <motion.div 
       whileHover={{ y: -2 }}
-      className="group bg-white border border-slate-100 rounded-[32px] p-5 md:p-6 flex flex-col md:grid md:grid-cols-[120px_1fr_200px] gap-4 md:gap-6 items-center transition-all hover:shadow-2xl hover:shadow-slate-200/50"
+      onClick={() => { if (isAdmin) setShowAdminInfo(true); }}
+      className={`relative group bg-white border border-slate-100 rounded-[32px] p-5 md:p-6 flex flex-col md:grid md:grid-cols-[120px_1fr_200px] gap-4 md:gap-6 items-center transition-all hover:shadow-2xl hover:shadow-slate-200/50 ${isAdmin ? 'cursor-pointer' : ''}`}
     >
+      {/* Admin Metrics Window (Modal Style Overlay) */}
+      {isAdmin && showAdminInfo && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[1000] flex items-center justify-center p-4" onClick={(e) => { e.stopPropagation(); setShowAdminInfo(false); }}>
+          <motion.div 
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-slate-900 shadow-2xl rounded-[40px] border border-white/10 text-white w-full max-w-lg overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="p-8 pb-4 flex items-center justify-between border-b border-white/10">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-500/20 rounded-xl text-amber-500">
+                  <ShieldCheck size={24} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black uppercase tracking-tight">Служебная информация</h3>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{event.title}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowAdminInfo(false)}
+                className="p-3 hover:bg-white/10 rounded-2xl transition-colors text-slate-400"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="p-8 space-y-8 overflow-y-auto max-h-[70vh]">
+              {/* Personal Status Block for Admin */}
+              <div className="p-6 bg-white/5 rounded-3xl border border-white/10">
+                <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest mb-4">Ваше участие в событии</p>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-xl ${isUserRegistered ? 'bg-green-500/20 text-green-500' : 'bg-slate-500/20 text-slate-500'}`}>
+                      {isUserRegistered ? <Check size={20} /> : <X size={20} />}
+                    </div>
+                    <div>
+                      <p className="text-sm font-black">{isUserRegistered ? 'Вы записаны' : 'Вы не записаны'}</p>
+                      {isUserRegistered && userRegistration && (
+                        <p className={`text-[10px] font-bold uppercase tracking-wider ${
+                          userRegistration.paymentStatus === 'paid' ? 'text-green-400' : 
+                          userRegistration.paymentStatus === 'partial' ? 'text-yellow-400' : 'text-red-400'
+                        }`}>
+                          {userRegistration.paymentStatus === 'paid' ? `Оплачено: ${userRegistration.amountPaid.toLocaleString()} ₽` : 
+                           userRegistration.paymentStatus === 'partial' ? `Частично: ${userRegistration.amountPaid.toLocaleString()} ₽` : 'Не оплачено'}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {!isUserRegistered && (
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); onRegister(); setShowAdminInfo(false); }}
+                      className="px-4 py-2 bg-white text-slate-900 rounded-xl text-xs font-black uppercase hover:bg-logo-blue hover:text-white transition-all"
+                    >
+                      Записаться
+                    </button>
+                  )}
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Всего записано</p>
+                  <p className="text-3xl font-black">{totalRegistered}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Полных оплат</p>
+                  <p className="text-3xl font-black">{totalPaid}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Наличные (итого)</p>
+                  <p className="text-xl font-bold text-green-400">{cashTotal.toLocaleString()} ₽</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Безнал (итого)</p>
+                  <p className="text-xl font-bold text-blue-400">{cardTotal.toLocaleString()} ₽</p>
+                </div>
+              </div>
+              
+              <div className="pt-6 border-t border-white/10">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-[10px] font-black uppercase text-red-400/80 tracking-widest">Дополнительные расходы</p>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+                      if (!SpeechRecognition) return;
+                      const recognition = new SpeechRecognition();
+                      recognition.lang = 'ru-RU';
+                      recognition.onstart = () => setIsListening(true);
+                      recognition.onend = () => setIsListening(false);
+                      recognition.onresult = async (e: any) => {
+                        const transcript = e.results[0][0].transcript;
+                        const num = transcript.replace(/\D/g, '');
+                        if (num) {
+                          try {
+                            await updateDoc(doc(db, 'events', event.id), {
+                              additionalExpenses: Number(num)
+                            });
+                          } catch (err) {
+                             handleFirestoreError(err, OperationType.WRITE, 'events');
+                          }
+                        }
+                      };
+                      recognition.start();
+                    }}
+                    className={`p-2 rounded-xl transition-all ${isListening ? 'bg-red-500 text-white animate-pulse' : 'hover:bg-white/10 text-red-400'}`}
+                  >
+                    <Mic size={18} />
+                  </button>
+                </div>
+                <div className="flex items-center gap-3">
+                  <input 
+                    type="number"
+                    defaultValue={event.additionalExpenses || 0}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        (e.target as HTMLInputElement).blur();
+                      }
+                    }}
+                    onBlur={async (e) => {
+                      const val = Number(e.target.value);
+                      if (val !== (event.additionalExpenses || 0)) {
+                        try {
+                          await updateDoc(doc(db, 'events', event.id), {
+                            additionalExpenses: val
+                          });
+                        } catch (err) {
+                          handleFirestoreError(err, OperationType.WRITE, 'events');
+                        }
+                      }
+                    }}
+                    className="bg-white/10 border border-white/20 rounded-2xl px-6 py-4 text-lg font-black text-red-400 w-full outline-none focus:border-red-400 transition-all"
+                    placeholder="0"
+                  />
+                  <span className="text-2xl font-black text-red-400">₽</span>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
       <div className="flex md:flex-col items-center justify-center md:border-r border-slate-100 md:pr-6 w-full md:w-auto border-b md:border-b-0 pb-4 md:pb-0">
         <span className="text-4xl md:text-5xl font-black tracking-tighter leading-none">{day}</span>
         <span className="text-[11px] font-black uppercase tracking-widest text-slate-400 ml-3 md:ml-0 md:mt-1">{month}</span>
@@ -1310,24 +1694,52 @@ function EventRow({ event, onRegister, isRegistering }: EventRowProps) {
       <div className="flex flex-col items-center md:items-end w-full md:w-auto pt-2 md:pt-0">
         <button 
           onClick={onRegister}
-          disabled={isRegistering || isFull}
-          className="w-full md:w-auto bg-slate-900 text-white px-10 py-5 md:py-4 rounded-2xl font-bold text-sm hover:bg-logo-blue transition-all active:scale-95 shadow-xl shadow-slate-200 disabled:opacity-50"
+          disabled={isRegistering || (isFull && !isUserRegistered)}
+          className={`w-full md:w-auto px-10 py-5 md:py-4 rounded-2xl font-bold text-sm transition-all active:scale-95 shadow-xl shadow-slate-200 disabled:opacity-50 ${
+            isUserRegistered 
+              ? 'bg-blue-50 text-logo-blue border border-blue-100 hover:bg-blue-100' 
+              : 'bg-slate-900 text-white hover:bg-logo-blue'
+          }`}
         >
-          {isRegistering ? 'Запись...' : isFull ? 'Мест нет' : 'Записаться'}
+          {isRegistering ? 'Запись...' : isUserRegistered ? 'Вы записаны' : isFull ? 'Мест нет' : 'Записаться'}
         </button>
-        <div className={`mt-4 md:mt-3 flex items-center gap-2 px-4 py-2 md:px-3 md:py-1.5 rounded-xl border ${isFull ? 'bg-red-50 border-red-100 text-red-600' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
-          <Users size={12} className={isFull ? 'text-red-400' : 'text-slate-400'} />
-          <span className="text-[10px] font-black uppercase tracking-widest">
-            {registeredCount} / {event.maxParticipants || '∞'} ЗАПИСАНО
-          </span>
+        {isUserRegistered && userRegistration && (
+          <button 
+            onClick={(e) => { e.stopPropagation(); onShowFinance?.(); }}
+            className="mt-3 flex items-center gap-2 hover:bg-slate-50 px-3 py-1.5 rounded-xl transition-all border border-transparent hover:border-slate-200 group/status"
+          >
+            <div className={`w-2.5 h-2.5 rounded-full ${getStatusColor(userRegistration.paymentStatus)} shadow-sm group-hover/status:scale-110 transition-transform`} />
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-1">
+              {userRegistration.paymentStatus === 'paid' ? 'Оплачено' : 
+               userRegistration.paymentStatus === 'partial' ? 'Частично' : 'Не оплачено'}
+              <ChevronRight size={10} className="text-slate-300" />
+            </span>
+          </button>
+        )}
+        <div className="mt-4 md:mt-3 flex items-center gap-2 px-4 py-2 md:px-3 md:py-1.5 rounded-xl border relative">
+          <div className={`flex items-center gap-2 flex-1 ${isFull ? 'text-red-600' : 'text-slate-500'}`}>
+            <Users size={12} className={isFull ? 'text-red-400' : 'text-slate-400'} />
+            <span className={`text-[10px] font-black uppercase tracking-widest ${isFull ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-100'}`}>
+              {registeredCount} / {event.maxParticipants || '∞'} ЗАПИСАНО
+            </span>
+          </div>
+          {isAdmin && (
+            <button 
+              onClick={(e) => { e.stopPropagation(); setShowAdminInfo(!showAdminInfo); }}
+              className={`p-1.5 rounded-lg transition-all ${showAdminInfo ? 'bg-slate-900 text-white' : 'hover:bg-slate-200 text-slate-400'}`}
+              title="Показать статистику"
+            >
+              <Activity size={14} />
+            </button>
+          )}
         </div>
       </div>
     </motion.div>
   );
 }
 
-function AdminPanel({ events, financeRecords, participantsCount }: { events: Event[], financeRecords: FinanceRecord[], participantsCount: number }) {
-  const [subView, setSubView] = useState<'events' | 'finance' | 'analytics'>('events');
+function AdminPanel({ events, financeRecords, registrations, participantsCount, allUserProfiles, leads }: { events: Event[], financeRecords: FinanceRecord[], registrations: Registration[], participantsCount: number, allUserProfiles: UserProfile[], leads: any[] }) {
+  const [subView, setSubView] = useState<'events' | 'finance' | 'analytics' | 'participants'>('events');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [speakerName, setSpeakerName] = useState('');
@@ -1338,15 +1750,53 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
   const [duration, setDuration] = useState(2); // hours
   const [category, setCategory] = useState('Семинары');
   const [price, setPrice] = useState(0);
-  const [discounts, setDiscounts] = useState('');
-  const [access, setAccess] = useState('');
+  const [discounts, setDiscounts] = useState('При оплате за весь курс - 10%');
+  const [access, setAccess] = useState('Все желающие');
   const [rentExpense, setRentExpense] = useState(0);
   const [speakerFee, setSpeakerFee] = useState(0);
-  const [format, setFormat] = useState<'Онлайн' | 'Оффлайн'>('Оффлайн');
-  const [maxParticipants, setMaxParticipants] = useState(50);
+  const [format, setFormat] = useState<'Онлайн' | 'Оффлайн' | 'Смешанный'>('Оффлайн');
+  const [maxParticipants, setMaxParticipants] = useState(25);
+  const [additionalDates, setAdditionalDates] = useState<string[]>([]);
   const [isListening, setIsListening] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<Event[]>([]);
+  const [manualAdditionalExpenses, setManualAdditionalExpenses] = useState(0);
+
+  // Derived Metrics for Служебная информация
+  const matchedEvent = events.find(e => e.title.toLowerCase() === title.toLowerCase() && e.speakerName.toLowerCase() === speakerName.toLowerCase());
+  const eventRegs = matchedEvent ? registrations.filter(r => r.eventId === matchedEvent.id) : [];
+  
+  const totalRegistered = eventRegs.filter(r => r.status !== 'cancelled').length;
+  const totalPaid = eventRegs.filter(r => r.paymentStatus === 'paid').length;
+  const cashTotal = eventRegs.reduce((sum, r) => sum + (r.paymentMethod === 'cash' ? r.amountPaid : 0), 0);
+  const cardTotal = eventRegs.reduce((sum, r) => sum + (r.paymentMethod === 'card' ? r.amountPaid : 0), 0);
+  
+  // Global Analytics calculations
+  const globalCashRevenue = registrations
+    .filter(r => r.paymentMethod === 'cash' && r.paymentStatus === 'paid')
+    .reduce((sum, r) => sum + (r.amountPaid || 0), 0);
+  const globalCardRevenue = registrations
+    .filter(r => r.paymentMethod === 'card' && r.paymentStatus === 'paid')
+    .reduce((sum, r) => sum + (r.amountPaid || 0), 0);
+  const globalUnderpayments = registrations
+    .filter(r => r.status !== 'cancelled')
+    .reduce((sum, r) => {
+      const event = events.find(e => e.id === r.eventId);
+      const price = event?.price || 0;
+      return sum + Math.max(0, price - (r.amountPaid || 0));
+    }, 0);
+
+  // Note: automatic expenses from financeRecords are no longer primary here as per user request for manual entry
+  const computedAdditionalExpenses = matchedEvent 
+    ? financeRecords.filter(f => f.eventId === matchedEvent.id && f.type === 'expense').reduce((sum, r) => sum + r.amount, 0)
+    : 0;
+
+  // Sync manual expenses when matched event changes
+  useEffect(() => {
+    if (matchedEvent?.additionalExpenses !== undefined) {
+      setManualAdditionalExpenses(matchedEvent.additionalExpenses);
+    }
+  }, [matchedEvent?.id, matchedEvent?.additionalExpenses]);
 
   const locations = Array.from(new Set(events.map(e => e.location))).sort((a, b) => {
     const countA = events.filter(e => e.location === a).length;
@@ -1390,7 +1840,7 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
       // Example: "Семинар Второе рождение спикер Ольга Воротникова цена 5000"
       
       // 1. Title Extraction (everything before keywords)
-      const keywords = ['спикер', 'цена', 'дата', 'локация', 'филиал'];
+      const keywords = ['спикер', 'цена', 'дата', 'локация', 'филиал', 'расходы'];
       let mainTitle = transcript;
       keywords.forEach(k => {
         const idx = mainTitle.indexOf(k);
@@ -1399,7 +1849,7 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
       if (mainTitle.trim()) setTitle(mainTitle.trim().charAt(0).toUpperCase() + mainTitle.trim().slice(1));
 
       // 2. Speaker Extraction
-      const speakerMatch = transcript.match(/спикер\s+([а-яё\s]+?)(?=\s+цена|\s+дата|\s+локация|\s+филиал|$)/);
+      const speakerMatch = transcript.match(/спикер\s+([а-яё\s]+?)(?=\s+цена|\s+дата|\s+локация|\s+филиал|\s+расходы|$)/);
       if (speakerMatch) setSpeakerName(speakerMatch[1].trim().split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '));
 
       // 3. Price Extraction
@@ -1407,16 +1857,20 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
       if (priceMatch) setPrice(Number(priceMatch[1]));
 
       // 4. Location Extraction
-      const locationMatch = transcript.match(/локация\s+([а-яё\s]+?)(?=\s+спикер|\s+цена|\s+дата|\s+филиал|$)/);
+      const locationMatch = transcript.match(/локация\s+([а-яё\s]+?)(?=\s+спикер|\s+цена|\s+дата|\s+филиал|\s+расходы|$)/);
       if (locationMatch) setLocation(locationMatch[1].trim().charAt(0).toUpperCase() + locationMatch[1].trim().slice(1));
 
       // 5. Branch Extraction
-      const branchMatch = transcript.match(/филиал\s+([а-яё\s]+?)(?=\s+спикер|\s+цена|\s+дата|\s+локация|$)/);
+      const branchMatch = transcript.match(/филиал\s+([а-яё\s]+?)(?=\s+спикер|\s+цена|\s+дата|\s+локация|\s+расходы|$)/);
       if (branchMatch) {
         const bName = branchMatch[1].trim();
         const found = BRANCHES.find(b => b.toLowerCase().includes(bName.toLowerCase()));
         if (found) setBranch(found);
       }
+
+      // 6. Manual Expenses Extraction
+      const expenseMatch = transcript.match(/расходы\s+(\d+)/);
+      if (expenseMatch) setManualAdditionalExpenses(Number(expenseMatch[1]));
     };
 
     recognition.start();
@@ -1437,6 +1891,9 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
 
     setStatus('Сохранение...');
     try {
+      // Map additional dates
+      const sessionDates = [startTime, ...additionalDates.slice(0, sessionsCount - 1)];
+
       await addDoc(collection(db, 'events'), {
         title,
         description,
@@ -1444,15 +1901,17 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
         location,
         branch,
         sessionsCount: Number(sessionsCount),
+        sessionDates,
         startTime: start,
         endTime: end,
         category,
         price: Number(price),
-        discounts,
+        discounts: discounts || 'Без скидок',
         access,
         format,
         maxParticipants: Number(maxParticipants),
         registeredCount: 0,
+        additionalExpenses: Number(manualAdditionalExpenses),
         baseExpenses: {
           rent: Number(rentExpense),
           speakerFee: Number(speakerFee),
@@ -1473,6 +1932,7 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
       setSpeakerName('');
       setLocation('');
       setStartTime('');
+      setManualAdditionalExpenses(0);
       setTimeout(() => setStatus(null), 3000);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'events');
@@ -1517,20 +1977,226 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
         >
           Аналитика
         </button>
+        <button 
+          onClick={() => setSubView('participants')}
+          className={`px-6 py-4 md:py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all w-full md:w-auto ${
+            subView === 'participants' 
+              ? 'bg-slate-900 text-white shadow-lg shadow-slate-200' 
+              : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
+          }`}
+        >
+          Участники
+        </button>
       </div>
 
+      {/* Tab Content */}
+      {subView === 'participants' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50">
+            <h3 className="text-xl font-black mb-6">Реестр участников (Единый список)</h3>
+            <div className="space-y-4">
+              {(() => {
+                // Aggregate participants by FIO
+                const participantMap: Record<string, { 
+                  fullName: string, 
+                  lastName: string, 
+                  firstName: string, 
+                  patronymic: string,
+                  logins: Set<string>, 
+                  roles: Set<string>, 
+                  academyStatuses: Set<string>,
+                  totalAttended: number,
+                  upcomingRegistrations: Registration[]
+                }> = {};
+
+                // Helper to get FIO from profile
+                const getFio = (profile: UserProfile) => {
+                  const ln = (profile.lastName || '').trim();
+                  const fn = (profile.firstName || '').trim();
+                  const p = (profile.patronymic || '').trim();
+                  if (!ln && !fn) return null;
+                  return { ln, fn, p, full: `${ln} ${fn} ${p}`.trim() };
+                };
+
+                // 1. Process all user profiles
+                allUserProfiles.forEach(up => {
+                  const fio = getFio(up);
+                  if (!fio) return;
+                  
+                  const key = fio.full.toLowerCase();
+                  if (!participantMap[key]) {
+                    participantMap[key] = {
+                      fullName: fio.full,
+                      lastName: fio.ln,
+                      firstName: fio.fn,
+                      patronymic: fio.p,
+                      logins: new Set(),
+                      roles: new Set(),
+                      academyStatuses: new Set(),
+                      totalAttended: 0,
+                      upcomingRegistrations: []
+                    };
+                  }
+                  participantMap[key].logins.add(up.email);
+                  participantMap[key].roles.add(up.role);
+                  if (up.academyStatus) participantMap[key].academyStatuses.add(up.academyStatus);
+                });
+
+                // 2. Process leads (manually added cards)
+                leads.forEach(l => {
+                  const ln = (l.lastName || '').trim();
+                  const fn = (l.firstName || '').trim();
+                  const p = (l.patronymic || '').trim();
+                  const full = l.fullName || `${ln} ${fn} ${p}`.trim();
+                  if (!full) return;
+
+                  const key = full.toLowerCase();
+                  if (!participantMap[key]) {
+                    participantMap[key] = {
+                      fullName: full,
+                      lastName: ln || full.split(' ')[0] || '',
+                      firstName: fn || full.split(' ')[1] || '',
+                      patronymic: p || full.split(' ').slice(2).join(' ') || '',
+                      logins: new Set(),
+                      roles: new Set(),
+                      academyStatuses: new Set(),
+                      totalAttended: 0,
+                      upcomingRegistrations: []
+                    };
+                  }
+                  if (l.email) participantMap[key].logins.add(l.email);
+                  if (l.participantStatus) participantMap[key].academyStatuses.add(l.participantStatus);
+                });
+
+                // 3. Process registrations to enrich map
+                registrations.forEach(reg => {
+                  let participantKey: string | null = null;
+                  
+                  // Try to find by UID first
+                  const ownerProfile = allUserProfiles.find(up => up.uid === reg.userId);
+                  if (ownerProfile) {
+                    const fio = getFio(ownerProfile);
+                    if (fio) participantKey = fio.full.toLowerCase();
+                  }
+
+                  // If not found by UID, try by participantName in reg
+                  if (!participantKey && reg.participantName) {
+                    participantKey = reg.participantName.trim().toLowerCase();
+                    if (!participantMap[participantKey]) {
+                      participantMap[participantKey] = {
+                        fullName: reg.participantName,
+                        lastName: reg.participantName.split(' ')[0] || '',
+                        firstName: reg.participantName.split(' ')[1] || '',
+                        patronymic: reg.participantName.split(' ').slice(2).join(' ') || '',
+                        logins: new Set(),
+                        roles: new Set(),
+                        academyStatuses: new Set(),
+                        totalAttended: 0,
+                        upcomingRegistrations: []
+                      };
+                    }
+                  }
+
+                  if (participantKey && participantMap[participantKey]) {
+                    const p = participantMap[participantKey];
+                    if (reg.status === 'attended') {
+                      p.totalAttended += 1;
+                    } else if (reg.status !== 'cancelled') {
+                      // Check if event is in the future
+                      const event = events.find(e => e.id === reg.eventId);
+                      if (event) {
+                        const eventDate = getEventDate(event.startTime);
+                        if (eventDate >= new Date()) {
+                          p.upcomingRegistrations.push(reg);
+                        } else {
+                          // Past but not marked as attended? Still count as record but maybe not "attended" specifically
+                        }
+                      }
+                    }
+                  }
+                });
+
+                return Object.values(participantMap).sort((a, b) => a.lastName.localeCompare(b.lastName)).map((p, idx) => (
+                  <div key={idx} className="p-6 bg-slate-50 rounded-[32px] border border-slate-100 hover:border-logo-blue/30 transition-all group">
+                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
+                      <div className="flex items-start gap-5">
+                        <div className="w-16 h-16 bg-white rounded-3xl flex items-center justify-center text-slate-300 group-hover:text-logo-blue transition-colors shadow-sm shrink-0">
+                          <User size={32} />
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="text-xl font-black text-slate-900 leading-tight">{p.fullName}</h4>
+                            <div className="flex gap-1">
+                              {Array.from(p.roles).map(role => (
+                                <span key={role} className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${role === 'admin' ? 'bg-amber-100 text-amber-600' : 'bg-slate-200 text-slate-500'}`}>
+                                  {role === 'admin' ? 'Админ' : role === 'speaker' ? 'Спикер' : 'Пользователь'}
+                                </span>
+                              ))}
+                              {Array.from(p.academyStatuses).map(status => (
+                                <span key={status} className="px-2 py-0.5 bg-logo-blue/10 text-logo-blue rounded-full text-[8px] font-black uppercase tracking-widest">
+                                  {status}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          
+                          <div className="flex flex-col gap-1">
+                            {Array.from(p.logins).slice(0, 5).map(email => (
+                              <p key={email} className="text-[10px] text-slate-400 font-medium flex items-center gap-1.5">
+                                <Search size={10} className="text-slate-300" /> {email}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-8 md:text-right px-4 py-3 bg-white rounded-2xl shadow-sm border border-slate-100 md:bg-transparent md:border-0 md:shadow-none">
+                        <div>
+                          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Посещено</p>
+                          <p className="text-xl font-black text-slate-900">{p.totalAttended}</p>
+                        </div>
+                        <div>
+                          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Записи</p>
+                          <p className="text-xl font-black text-slate-900">{p.upcomingRegistrations.length}</p>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Оплаты (Текущие)</p>
+                          <div className="flex gap-1">
+                            {p.upcomingRegistrations.map((reg, rIdx) => (
+                              <div 
+                                key={rIdx} 
+                                className={`w-3.5 h-3.5 rounded-full border-2 border-white shadow-sm ${
+                                  reg.paymentStatus === 'paid' ? 'bg-green-500' :
+                                  reg.paymentStatus === 'partial' ? 'bg-yellow-500' : 'bg-red-500'
+                                }`} 
+                                title={reg.paymentStatus === 'paid' ? 'Оплачено' : reg.paymentStatus === 'partial' ? 'Частично' : 'Не оплачено'}
+                              />
+                            ))}
+                            {p.upcomingRegistrations.length === 0 && <span className="text-[10px] text-slate-300 font-bold italic">—</span>}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
       {subView === 'events' && (
-        <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* Block 1: Публичная информация */}
+        <form onSubmit={handleSubmit} className="space-y-8">
+          {/* Block 1: Основная информация */}
           <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-6 flex flex-col">
             <h3 className="text-xl font-black flex items-center gap-3">
               <Eye className="text-logo-blue" /> Публичная информация
             </h3>
             
-            <div className="space-y-4 flex-1">
+            <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Название</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Название мероприятия</label>
                   <div className="relative">
                     <input 
                       type="text"
@@ -1552,7 +2218,7 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Спикер</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Имя и фамилия спикера</label>
                   <input 
                     type="text"
                     value={speakerName}
@@ -1566,7 +2232,7 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Дата</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Дата проведения</label>
                   <input 
                     type="datetime-local"
                     value={startTime}
@@ -1576,7 +2242,7 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Час(ы)</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Количество часов</label>
                   <input 
                     type="number"
                     value={duration}
@@ -1588,27 +2254,59 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Занятий</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Количество занятий</label>
                   <input 
                     type="number"
                     value={sessionsCount}
-                    onChange={(e) => setSessionsCount(Number(e.target.value))}
+                    onChange={(e) => {
+                      const val = Math.max(1, Number(e.target.value));
+                      setSessionsCount(val);
+                      // Pre-fill additional dates if needed
+                      if (val > 1) {
+                        const newDates = [...additionalDates];
+                        while (newDates.length < val - 1) newDates.push('');
+                        setAdditionalDates(newDates);
+                      }
+                    }}
                     className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all text-sm"
                     min="1"
                     required
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Цена (₽)</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Макс. мест</label>
                   <input 
                     type="number"
-                    value={price}
-                    onChange={(e) => setPrice(Number(e.target.value))}
+                    value={maxParticipants}
+                    onChange={(e) => setMaxParticipants(Number(e.target.value))}
                     className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all text-sm"
-                    min="0"
+                    min="1"
+                    required
                   />
                 </div>
               </div>
+
+              {/* Dynamic Session Dates */}
+              {sessionsCount > 1 && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                  {Array.from({ length: sessionsCount - 1 }).map((_, i) => (
+                    <div key={i} className="space-y-1">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-logo-blue ml-1">Дата занятия {i + 2}</label>
+                      <input 
+                        type="datetime-local"
+                        value={additionalDates[i] || ''}
+                        onChange={(e) => {
+                          const newDates = [...additionalDates];
+                          newDates[i] = e.target.value;
+                          setAdditionalDates(newDates);
+                        }}
+                        className="w-full px-3 py-2 bg-white border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all text-[10px]"
+                        required
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="space-y-1">
@@ -1640,28 +2338,39 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
                   >
                     <option value="Оффлайн">Оффлайн</option>
                     <option value="Онлайн">Онлайн</option>
+                    <option value="Смешанный">Смешанный (оффлайн + онлайн)</option>
                   </select>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Локация</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Место проведения</label>
                   <input 
                     type="text"
-                    list="admin-locations-v3"
+                    list="admin-locations-v4"
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
                     className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all text-sm"
                     placeholder="Локация..."
                     required
                   />
-                  <datalist id="admin-locations-v3">
+                  <datalist id="admin-locations-v4">
                     {locations.map(loc => <option key={loc} value={loc} />)}
                   </datalist>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Скидки</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Цена за все занятия (₽)</label>
+                  <input 
+                    type="number"
+                    value={price}
+                    onChange={(e) => setPrice(Number(e.target.value))}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all text-sm"
+                    min="0"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Скидка</label>
                   <input 
                     type="text"
                     value={discounts}
@@ -1670,6 +2379,9 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
                     placeholder="Напр. 10%..."
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Допуск</label>
                   <input 
@@ -1677,62 +2389,18 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
                     value={access}
                     onChange={(e) => setAccess(e.target.value)}
                     className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all text-sm"
-                    placeholder="Допуск..."
+                    placeholder="Кто допущен..."
                   />
                 </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Описание</label>
-                <textarea 
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold outline-none text-sm min-h-[60px]"
-                  placeholder="Описание..."
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Block 2: Для администраторов */}
-          <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-8 flex flex-col">
-            <h3 className="text-xl font-black flex items-center gap-3">
-              <ShieldCheck className="text-amber-500" /> Служебная информация
-            </h3>
-
-            <div className="space-y-6 flex-1">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Аренда (₽)</label>
-                  <input 
-                    type="number"
-                    value={rentExpense}
-                    onChange={(e) => setRentExpense(Number(e.target.value))}
-                    className="w-full px-5 py-3 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
-                    min="0"
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Описание мероприятия</label>
+                  <textarea 
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-bold outline-none text-sm min-h-[42px]"
+                    placeholder="Описание..."
                   />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Гонорар (₽)</label>
-                  <input 
-                    type="number"
-                    value={speakerFee}
-                    onChange={(e) => setSpeakerFee(Number(e.target.value))}
-                    className="w-full px-5 py-3 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
-                    min="0"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Макс. мест</label>
-                <input 
-                  type="number"
-                  value={maxParticipants}
-                  onChange={(e) => setMaxParticipants(Number(e.target.value))}
-                  className="w-full px-5 py-3 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:ring-4 ring-logo-blue/20 outline-none transition-all"
-                  min="1"
-                />
               </div>
 
               {conflicts.length > 0 && (
@@ -1741,94 +2409,242 @@ function AdminPanel({ events, financeRecords, participantsCount }: { events: Eve
                     <AlertCircle size={14} /> Конфликт расписания
                   </div>
                   <div className="space-y-1">
-                    {conflicts.map(c => (
-                      <div key={c.id} className="text-[10px] font-bold text-amber-800">
-                        • {c.title}
-                      </div>
-                    ))}
+                    {conflicts.map(c => <div key={c.id} className="text-[10px] font-bold text-amber-800">• {c.title}</div>)}
                   </div>
                 </div>
               )}
-            </div>
 
-            <button 
-              type="submit"
-              className={`w-full py-4 rounded-xl font-black uppercase tracking-widest transition-all shadow-lg ${
-                conflicts.length > 0 
-                  ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-100' 
-                  : 'bg-slate-900 hover:bg-slate-800 text-white shadow-slate-100'
-              }`}
-            >
-              {status || (conflicts.length > 0 ? "Игнорировать" : "Сохранить")}
-            </button>
+              <button 
+                type="submit"
+                className={`w-full py-4 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg text-sm ${
+                  conflicts.length > 0 
+                    ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-100' 
+                    : 'bg-slate-900 hover:bg-slate-800 text-white shadow-slate-100'
+                }`}
+              >
+                {status || (conflicts.length > 0 ? "Игнорировать и сохранить" : "Сохранить Мероприятие")}
+              </button>
+            </div>
           </div>
 
-          {/* Block 3: Аналитика */}
+          {/* Block 2: Служебная информация (Computed Metrics) */}
           <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-6">
             <h3 className="text-xl font-black flex items-center gap-3">
-              <PieChartIcon className="text-indigo-500" /> Аналитика
+              <ShieldCheck className="text-amber-500" /> Служебная информация
             </h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                <p className="text-[9px] font-black uppercase text-slate-400 mb-1">Участники</p>
-                <p className="text-xl font-black">{participantsCount}</p>
+            
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-6">
+              <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Записалось</p>
+                <p className="text-2xl font-black text-slate-900">{totalRegistered}</p>
               </div>
-              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                <p className="text-[9px] font-black uppercase text-slate-400 mb-1">Активные</p>
-                <p className="text-xl font-black">{events.filter(e => e.status === 'active' || e.status === 'planned').length}</p>
+              <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Оплатило</p>
+                <p className="text-2xl font-black text-slate-900">{totalPaid}</p>
               </div>
-              <div className="col-span-2 p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
-                <p className="text-[9px] font-black uppercase text-indigo-400 mb-1">Выручка (общая)</p>
-                <p className="text-2xl font-black text-indigo-700">
-                  {financeRecords.filter(r => r.type === 'income').reduce((sum, r) => sum + r.amount, 0).toLocaleString()} ₽
-                </p>
+              <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Наличные</p>
+                <p className="text-2xl font-black text-slate-900">{cashTotal.toLocaleString()} ₽</p>
+              </div>
+              <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Безналичные</p>
+                <p className="text-2xl font-black text-slate-900">{cardTotal.toLocaleString()} ₽</p>
+              </div>
+              <div className="p-5 bg-slate-50 rounded-2xl border border-white shadow-inner shadow-slate-200/50 flex flex-col justify-between group/expense">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-red-400">Дополнительные расходы</p>
+                  <button 
+                    onClick={(e) => { e.preventDefault(); startVoiceInput(); }}
+                    className={`p-1.5 rounded-lg transition-all ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-red-50 text-red-400 hover:bg-red-100'}`}
+                  >
+                    <Mic size={14} />
+                  </button>
+                </div>
+                <div className="relative mt-2">
+                  <input 
+                    type="number" 
+                    value={manualAdditionalExpenses || ''} 
+                    onChange={(e) => setManualAdditionalExpenses(Number(e.target.value))}
+                    placeholder="0"
+                    className="w-full bg-transparent text-2xl font-black text-red-600 outline-none border-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  <span className="absolute right-0 bottom-1 text-red-400 font-black text-sm">₽</span>
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Block 4: Календарь */}
-          <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-6 overflow-hidden">
-            <h3 className="text-xl font-black flex items-center gap-3">
-              <CalendarIcon className="text-emerald-500" /> Календарь
-            </h3>
-            <div className="flex gap-3 overflow-x-auto pb-4 scrollbar-hide">
-              {Array.from({ length: 30 }, (_, i) => {
-                const d = new Date();
-                d.setDate(d.getDate() + i);
-                const isToday = i === 0;
-                return (
-                  <div key={i} className={`shrink-0 w-14 h-20 flex flex-col items-center justify-center rounded-[20px] border transition-all ${
-                    isToday ? 'bg-slate-900 border-slate-900 text-white shadow-lg' : 'bg-slate-50 border-slate-100 text-slate-600'
-                  }`}>
-                    <span className="text-[9px] font-black uppercase opacity-60 mb-1">
-                      {d.toLocaleDateString('ru-RU', { weekday: 'short' })}
-                    </span>
-                    <span className="text-lg font-black">{d.getDate()}</span>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-2 p-4 bg-emerald-50 rounded-2xl border border-emerald-100 flex items-center gap-3">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest">
-                График на ближайшие 30 дней
+            <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 flex items-center gap-3">
+              <AlertCircle size={16} className="text-amber-500" />
+              <p className="text-[10px] font-bold text-amber-700 uppercase tracking-widest">
+                ДАННЫЕ В ЭТОМ БЛОКЕ РАСЧИТЫВАЮТСЯ АВТОМАТИЧЕСКИ
               </p>
             </div>
           </div>
-        </form>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {/* Block 3: Аналитика */}
+            <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-6">
+              <h3 className="text-xl font-black flex items-center gap-3">
+                <PieChartIcon className="text-indigo-500" /> Аналитика
+              </h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                  <p className="text-[9px] font-black uppercase text-slate-400 mb-1">Участники</p>
+                  <p className="text-xl font-black">{participantsCount}</p>
+                </div>
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                  <p className="text-[9px] font-black uppercase text-slate-400 mb-1">Активные встречи</p>
+                  <p className="text-xl font-black">{events.filter(e => e.status === 'active' || e.status === 'planned').length}</p>
+                </div>
+                
+                <div className="col-span-2 space-y-4">
+                  <div className="p-4 bg-green-50 rounded-2xl border border-green-100 flex justify-between items-center">
+                    <p className="text-[9px] font-black uppercase text-green-600">Наличные</p>
+                    <p className="text-lg font-black text-green-700">{globalCashRevenue.toLocaleString()} ₽</p>
+                  </div>
+                  <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 flex justify-between items-center">
+                    <p className="text-[9px] font-black uppercase text-blue-600">Безналичные</p>
+                    <p className="text-lg font-black text-blue-700">{globalCardRevenue.toLocaleString()} ₽</p>
+                  </div>
+                  <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 flex justify-between items-center">
+                    <div className="flex flex-col">
+                      <p className="text-[9px] font-black uppercase text-amber-600">Недоплаты</p>
+                      <p className="text-[8px] text-amber-500 font-bold uppercase tracking-tighter">Ожидаемые поступления</p>
+                    </div>
+                    <p className="text-lg font-black text-amber-700">{globalUnderpayments.toLocaleString()} ₽</p>
+                  </div>
+                </div>
+
+                <div className="col-span-2 p-5 bg-indigo-600 rounded-[24px] shadow-lg shadow-indigo-100 text-white">
+                  <p className="text-[9px] font-black uppercase opacity-60 mb-1">Общая выручка</p>
+                  <p className="text-3xl font-black">
+                    {(globalCashRevenue + globalCardRevenue).toLocaleString()} ₽
+                  </p>
+                </div>
+              </div>
+            </div>
+
+          {/* Block 4: Календарь */}
+          <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-6 overflow-hidden">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-black flex items-center gap-3">
+                <CalendarIcon className="text-emerald-500" /> Календарь
+              </h3>
+              <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 px-3 py-1 rounded-full">
+                {new Date().toLocaleDateString('ru', { day: 'numeric', month: 'short' })} — {new Date(new Date().getTime() + 29 * 24 * 60 * 60 * 1000).toLocaleDateString('ru', { day: 'numeric', month: 'short' })}
+              </span>
+            </div>
+            
+            <div className="grid grid-cols-7 gap-2 text-center mb-2">
+              {(() => {
+                const now = new Date();
+                return Array.from({ length: 7 }, (_, i) => {
+                  const d = new Date(now);
+                  d.setDate(d.getDate() + i);
+                  return (
+                    <div key={i} className="text-[9px] font-black uppercase text-slate-400">
+                      {d.toLocaleDateString('ru-RU', { weekday: 'short' })}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            <div className="grid grid-cols-7 gap-2">
+              {(() => {
+                const now = new Date();
+                const days = [];
+
+                for (let i = 0; i < 30; i++) {
+                  const currentDayDate = new Date(now);
+                  currentDayDate.setDate(now.getDate() + i);
+                  currentDayDate.setHours(0, 0, 0, 0);
+                  
+                  const dayEnd = new Date(currentDayDate);
+                  dayEnd.setHours(23, 59, 59, 999);
+
+                  const isToday = i === 0;
+                  
+                  const hasEvent = events.some(e => {
+                    const eventDate = getEventDate(e.startTime);
+                    if (eventDate >= currentDayDate && eventDate <= dayEnd) return true;
+                    if (e.sessionDates) {
+                      return e.sessionDates.some(sd => {
+                        const sDate = getEventDate(sd);
+                        return sDate >= currentDayDate && sDate <= dayEnd;
+                      });
+                    }
+                    return false;
+                  });
+
+                  days.push(
+                    <div 
+                      key={i} 
+                      className={`h-10 md:h-12 flex flex-col items-center justify-center rounded-xl md:rounded-2xl border transition-all relative ${
+                        isToday 
+                          ? 'bg-slate-900 border-slate-900 text-white shadow-lg' 
+                          : hasEvent 
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-900 shadow-sm' 
+                            : 'bg-slate-50 border-slate-100 text-slate-500'
+                      }`}
+                    >
+                      <span className="text-[9px] font-black opacity-50 mb-0.5">{currentDayDate.getDate()}</span>
+                      <span className="text-[8px] font-bold uppercase truncate w-full text-center px-1">
+                        {currentDayDate.toLocaleDateString('ru', { month: 'short' }).replace('.', '')}
+                      </span>
+                      {hasEvent && !isToday && (
+                        <div className="absolute top-1 right-1 w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+                      )}
+                    </div>
+                  );
+                }
+                return days;
+              })()}
+            </div>
+
+            <div className="mt-4 p-4 bg-emerald-50 rounded-2xl border border-emerald-100 flex items-center gap-3">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest">
+                График на месяц вперед с сегодняшнего дня
+              </p>
+            </div>
+          </div>
+        </div>
+      </form>
       )}
       {subView === 'finance' && (
-        <FinanceView events={events} records={financeRecords} />
+        <FinanceView events={events} records={financeRecords} registrations={registrations} />
       )}
 
       {subView === 'analytics' && (
-        <AnalyticsDashboard events={events} records={financeRecords} participantsCount={participantsCount} />
+        <AnalyticsDashboard 
+          events={events} 
+          records={financeRecords} 
+          registrations={registrations}
+          participantsCount={participantsCount} 
+        />
       )}
     </div>
   );
 }
 
-function AnalyticsDashboard({ events, records, participantsCount }: { events: Event[], records: FinanceRecord[], participantsCount: number }) {
+function AnalyticsDashboard({ events, records, registrations, participantsCount }: { events: Event[], records: FinanceRecord[], registrations: Registration[], participantsCount: number }) {
+  // 0. Revenue Metrics
+  const cashRevenue = registrations
+    .filter(r => r.paymentMethod === 'cash' && r.paymentStatus === 'paid')
+    .reduce((sum, r) => sum + (r.amountPaid || 0), 0);
+  const cardRevenue = registrations
+    .filter(r => r.paymentMethod === 'card' && r.paymentStatus === 'paid')
+    .reduce((sum, r) => sum + (r.amountPaid || 0), 0);
+  const totalRevenue = cashRevenue + cardRevenue;
+  const underpayments = registrations
+    .filter(r => r.status !== 'cancelled')
+    .reduce((sum, r) => {
+      const event = events.find(e => e.id === r.eventId);
+      const price = event?.price || 0;
+      return sum + Math.max(0, price - (r.amountPaid || 0));
+    }, 0);
+
   // 1. Revenue Over Time
   const revenueData = records
     .filter(r => r.type === 'income')
@@ -1846,11 +2662,19 @@ function AnalyticsDashboard({ events, records, participantsCount }: { events: Ev
 
   // 2. Category Distribution
   const categoryData = events.reduce((acc: any[], e) => {
-    const existing = acc.find(item => item.name === e.category);
+    // Normalize category name to plural for distribution chart
+    const name = e.category === 'Семинар' ? 'Семинары' :
+                 e.category === 'Практика' ? 'Практики' :
+                 e.category === 'Вебинар' ? 'Вебинары' :
+                 e.category === 'Курс' ? 'Курсы' :
+                 e.category === 'Ретрит' ? 'Ретриты' :
+                 e.category === 'Путешествие' ? 'Путешествия' : e.category;
+
+    const existing = acc.find(item => item.name === name);
     if (existing) {
       existing.value += 1;
     } else {
-      acc.push({ name: e.category, value: 1 });
+      acc.push({ name, value: 1 });
     }
     return acc;
   }, []);
@@ -1875,24 +2699,20 @@ function AnalyticsDashboard({ events, records, participantsCount }: { events: Ev
       {/* Top Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
         <div className="bg-white p-5 md:p-8 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-xl">
-          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Заполняемость</p>
-          <p className="text-xl md:text-3xl font-black">
-            {Math.round((events.reduce((sum, e) => sum + e.registeredCount, 0) / events.reduce((sum, e) => sum + (e.maxParticipants || 0), 0)) * 100) || 0}%
-          </p>
+          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Наличные</p>
+          <p className="text-xl md:text-3xl font-black text-green-600">{cashRevenue.toLocaleString()} ₽</p>
         </div>
         <div className="bg-white p-5 md:p-8 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-xl">
-          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Средний чек</p>
-          <p className="text-xl md:text-3xl font-black">
-            {Math.round(records.filter(r => r.type === 'income').reduce((sum, r) => sum + r.amount, 0) / (events.reduce((sum, e) => sum + e.registeredCount, 0) || 1)).toLocaleString()} ₽
-          </p>
+          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Безналичные</p>
+          <p className="text-xl md:text-3xl font-black text-blue-600">{cardRevenue.toLocaleString()} ₽</p>
         </div>
         <div className="bg-white p-5 md:p-8 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-xl">
-          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">База участников</p>
-          <p className="text-xl md:text-3xl font-black">{participantsCount.toLocaleString()}</p>
+          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Недоплаты</p>
+          <p className="text-xl md:text-3xl font-black text-amber-600">{underpayments.toLocaleString()} ₽</p>
         </div>
         <div className="bg-white p-5 md:p-8 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-xl">
-          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">ROI (Средний)</p>
-          <p className="text-xl md:text-3xl font-black text-green-500">+24%</p>
+          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Общая выручка</p>
+          <p className="text-xl md:text-3xl font-black text-indigo-700">{totalRevenue.toLocaleString()} ₽</p>
         </div>
       </div>
 
@@ -1977,17 +2797,30 @@ function AnalyticsDashboard({ events, records, participantsCount }: { events: Ev
   );
 }
 
-function FinanceView({ events, records }: { events: Event[], records: FinanceRecord[] }) {
+function FinanceView({ events, records, registrations }: { events: Event[], records: FinanceRecord[], registrations: Registration[] }) {
   const [type, setType] = useState<'income' | 'expense'>('expense');
   const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState('Аренда');
+  const [category, setCategory] = useState('Прочие расходы');
   const [eventId, setEventId] = useState('');
   const [description, setDescription] = useState('');
   const [status, setStatus] = useState<string | null>(null);
+  const [showUnderpaid, setShowUnderpaid] = useState(false);
 
   const totalIncome = records.filter(r => r.type === 'income').reduce((sum, r) => sum + r.amount, 0);
   const totalExpense = records.filter(r => r.type === 'expense').reduce((sum, r) => sum + r.amount, 0);
   const netProfit = totalIncome - totalExpense;
+
+  const underpaidParticipants = registrations
+    .filter(r => r.status !== 'cancelled')
+    .map(r => {
+      const event = events.find(e => e.id === r.eventId);
+      const price = event?.price || 0;
+      const balance = price - (r.amountPaid || 0);
+      return { ...r, eventTitle: event?.title || 'Unknown', balance };
+    })
+    .filter(p => p.balance > 0);
+
+  const totalUnderpayment = underpaidParticipants.reduce((sum, p) => sum + p.balance, 0);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -2016,7 +2849,7 @@ function FinanceView({ events, records }: { events: Event[], records: FinanceRec
   return (
     <div className="space-y-12">
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50">
           <div className="flex items-center gap-3 text-green-500 mb-4">
             <ArrowUpRight size={24} />
@@ -2032,6 +2865,13 @@ function FinanceView({ events, records }: { events: Event[], records: FinanceRec
           <p className="text-3xl font-black">{totalExpense.toLocaleString()} ₽</p>
         </div>
         <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50">
+          <div className="flex items-center gap-3 text-amber-500 mb-4">
+            <AlertCircle size={24} />
+            <span className="text-xs font-black uppercase tracking-widest">Недоплаты</span>
+          </div>
+          <p className="text-3xl font-black">{totalUnderpayment.toLocaleString()} ₽</p>
+        </div>
+        <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50">
           <div className="flex items-center gap-3 text-logo-blue mb-4">
             <TrendingUp size={24} />
             <span className="text-xs font-black uppercase tracking-widest">Чистая прибыль</span>
@@ -2039,6 +2879,59 @@ function FinanceView({ events, records }: { events: Event[], records: FinanceRec
           <p className="text-3xl font-black">{netProfit.toLocaleString()} ₽</p>
         </div>
       </div>
+
+      {/* Underpaid Participants Section */}
+      {underpaidParticipants.length > 0 && (
+        <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 overflow-hidden">
+          <button 
+            onClick={() => setShowUnderpaid(!showUnderpaid)}
+            className="w-full flex items-center justify-between group"
+          >
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl">
+                <Users size={24} />
+              </div>
+              <div className="text-left">
+                <h3 className="text-xl font-black">Участники с задолженностью</h3>
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                  Найдено {underpaidParticipants.length} чел.
+                </p>
+              </div>
+            </div>
+            <div className={`p-2 rounded-xl transition-all ${showUnderpaid ? 'bg-amber-100 text-amber-600' : 'bg-slate-50 text-slate-400 group-hover:bg-slate-100'}`}>
+              {showUnderpaid ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+            </div>
+          </button>
+          
+          <AnimatePresence>
+            {showUnderpaid && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="pt-8 space-y-4">
+                  {underpaidParticipants.map((participant, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-5 bg-slate-50 rounded-2xl border border-slate-100 hover:border-amber-200 transition-colors">
+                      <div>
+                        <p className="font-black text-slate-900">{participant.participantName || participant.userId}</p>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                          {participant.eventTitle}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-black text-red-600">-{participant.balance.toLocaleString()} ₽</p>
+                        <p className="text-[10px] text-slate-400 font-bold">Остаток долга</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_350px] gap-12">
         {/* Records List */}
@@ -2082,14 +2975,14 @@ function FinanceView({ events, records }: { events: Event[], records: FinanceRec
             <div className="flex bg-slate-100 p-1 rounded-2xl">
               <button 
                 type="button"
-                onClick={() => setType('expense')}
+                onClick={() => { setType('expense'); setCategory('Прочие расходы'); }}
                 className={`flex-1 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${type === 'expense' ? 'bg-white text-red-500 shadow-sm' : 'text-slate-400'}`}
               >
                 Расход
               </button>
               <button 
                 type="button"
-                onClick={() => setType('income')}
+                onClick={() => { setType('income'); setCategory('Оплата участия'); }}
                 className={`flex-1 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${type === 'income' ? 'bg-white text-green-500 shadow-sm' : 'text-slate-400'}`}
               >
                 Доход
@@ -2117,6 +3010,7 @@ function FinanceView({ events, records }: { events: Event[], records: FinanceRec
               >
                 {type === 'expense' ? (
                   <>
+                    <option value="Прочие расходы">Прочие расходы</option>
                     <option value="Аренда">Аренда</option>
                     <option value="Гонорар спикера">Гонорар спикера</option>
                     <option value="Маркетинг">Маркетинг</option>
@@ -2186,6 +3080,43 @@ function StatCard({ label, value, trend }: { label: string, value: string, trend
 
 function UserProfileView({ user, profile }: { user: FirebaseUser, profile: UserProfile | null }) {
   const [copied, setCopied] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [lastName, setLastName] = useState(profile?.lastName || '');
+  const [firstName, setFirstName] = useState(profile?.firstName || '');
+  const [patronymic, setPatronymic] = useState(profile?.patronymic || '');
+  const [academyStatus, setAcademyStatus] = useState(profile?.academyStatus || 'Ученик');
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (profile) {
+      setLastName(profile.lastName || '');
+      setFirstName(profile.firstName || '');
+      setPatronymic(profile.patronymic || '');
+      setAcademyStatus(profile.academyStatus || 'Ученик');
+    }
+  }, [profile]);
+
+  const handleSave = async () => {
+    setSaveStatus('Сохранение...');
+    try {
+      await setDoc(doc(db, 'users', user.uid), {
+        lastName,
+        firstName,
+        patronymic,
+        academyStatus,
+        displayName: `${lastName} ${firstName}`.trim() || user.displayName,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      setSaveStatus('Сохранено!');
+      setTimeout(() => {
+        setSaveStatus(null);
+        setIsEditing(false);
+      }, 2000);
+    } catch (error) {
+      setSaveStatus('Ошибка');
+    }
+  };
+
   const referralLink = `${window.location.origin}${window.location.pathname}?ref=${user.uid}`;
 
   const copyReferralLink = () => {
@@ -2201,16 +3132,74 @@ function UserProfileView({ user, profile }: { user: FirebaseUser, profile: UserP
           <div className="w-32 h-32 rounded-[40px] bg-gradient-to-br from-logo-purple to-logo-blue flex items-center justify-center text-white text-5xl font-black shadow-2xl shadow-blue-200">
             {user.photoURL ? <img src={user.photoURL} alt="avatar" className="w-full h-full object-cover rounded-[40px]" /> : (user.displayName?.[0] || 'U')}
           </div>
-          <div className="text-center md:text-left">
-            <span className="px-3 py-1 bg-slate-100 rounded-full text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2 inline-block">
-              {profile?.role || 'Участник'}
-            </span>
-            <h2 className="text-3xl font-black tracking-tight">{user.displayName}</h2>
+          <div className="text-center md:text-left flex-1">
+            <div className="flex items-center justify-center md:justify-start gap-2 mb-2">
+              <span className="px-3 py-1 bg-slate-100 rounded-full text-[10px] font-black uppercase tracking-widest text-slate-500">
+                {profile?.role === 'admin' ? 'Админ' : profile?.role === 'speaker' ? 'Спикер' : 'Пользователь'}
+              </span>
+              <span className="px-3 py-1 bg-logo-blue/10 rounded-full text-[10px] font-black uppercase tracking-widest text-logo-blue">
+                {profile?.academyStatus || 'Ученик'}
+              </span>
+            </div>
+            <h2 className="text-3xl font-black tracking-tight">{profile?.lastName} {profile?.firstName} {profile?.patronymic}</h2>
+            {!profile?.lastName && <h2 className="text-3xl font-black tracking-tight text-slate-300 italic">{user.displayName || 'Имя не указано'}</h2>}
             <p className="text-slate-400 font-medium">{user.email}</p>
           </div>
+          <button 
+            onClick={() => setIsEditing(!isEditing)}
+            className="p-4 bg-slate-100 hover:bg-slate-200 rounded-2xl transition-all text-slate-600"
+            title="Редактировать профиль"
+          >
+            <Edit3 size={20} />
+          </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        {isEditing ? (
+          <div className="space-y-6 animate-in fade-in slide-in-from-top-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Фамилия</label>
+                <input type="text" value={lastName} onChange={e => setLastName(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold outline-none focus:ring-2 ring-logo-blue/20" placeholder="Иванов" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Имя</label>
+                <input type="text" value={firstName} onChange={e => setFirstName(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold outline-none focus:ring-2 ring-logo-blue/20" placeholder="Иван" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Отчество</label>
+                <input type="text" value={patronymic} onChange={e => setPatronymic(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold outline-none focus:ring-2 ring-logo-blue/20" placeholder="Иванович" />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Статус в Академии</label>
+              <select 
+                value={academyStatus} 
+                onChange={e => setAcademyStatus(e.target.value as any)}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold outline-none appearance-none cursor-pointer"
+              >
+                <option value="Мастер">Мастер</option>
+                <option value="Магистр">Магистр</option>
+                <option value="Ученик">Ученик</option>
+                <option value="Новый">Новый</option>
+                <option value="Постоянный">Постоянный</option>
+                <option value="Слушатель">Слушатель</option>
+                <option value="Студент">Студент</option>
+                <option value="Выпускник">Выпускник</option>
+              </select>
+            </div>
+
+            <button 
+              onClick={handleSave}
+              disabled={saveStatus !== null}
+              className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-logo-blue transition-all disabled:opacity-50"
+            >
+              {saveStatus || 'Сохранить изменения'}
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-4">
           <div className="bg-slate-50 p-6 rounded-3xl">
             <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Посещено</h5>
             <p className="text-2xl font-black">12</p>
@@ -2244,8 +3233,10 @@ function UserProfileView({ user, profile }: { user: FirebaseUser, profile: UserP
           <ProfileRow label="Наставник" value="Ольга Воротникова" />
           <ProfileRow label="Пригласил" value={profile?.referrerId ? 'По ссылке' : 'Прямой вход'} />
         </div>
-      </div>
-    </div>
+      </>
+    )}
+  </div>
+</div>
   );
 }
 
@@ -2682,18 +3673,57 @@ function BlogRulesView() {
   );
 }
 function ParticipantCardPublic({ onBack, events }: { onBack: () => void, events: Event[] }) {
-  const [name, setName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [patronymic, setPatronymic] = useState('');
   const [phone, setPhone] = useState('');
   const [telegram, setTelegram] = useState('');
   const [whatsapp, setWhatsapp] = useState('');
   const [maxNumber, setMaxNumber] = useState('');
   const [city, setCity] = useState('');
   const [email, setEmail] = useState('');
-  const [participantStatus, setParticipantStatus] = useState('Новый');
+  const [participantStatus, setParticipantStatus] = useState('Ученик');
   const [attendedEvents, setAttendedEvents] = useState('');
   const [autoAttendedEvents, setAutoAttendedEvents] = useState<string[]>([]);
   const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState(false);
+  const [recognizedDevice, setRecognizedDevice] = useState<any | null>(null);
+  const [showForm, setShowForm] = useState(false);
+
+  useEffect(() => {
+    const savedParticipant = localStorage.getItem('last_participant');
+    if (savedParticipant) {
+      try {
+        const data = JSON.parse(savedParticipant);
+        setRecognizedDevice(data);
+      } catch (e) {
+        localStorage.removeItem('last_participant');
+      }
+    } else {
+      setShowForm(true);
+    }
+  }, []);
+
+  const handleRecognizedSubmit = async () => {
+    if (!recognizedDevice) return;
+    setSubmissionStatus('Сохранение...');
+    try {
+      await addDoc(collection(db, 'participants'), {
+        ...recognizedDevice,
+        autoAttendedEvents,
+        createdAt: serverTimestamp()
+      });
+      setSubmissionStatus('Карточка сохранена!');
+      setTimeout(onBack, 2000);
+    } catch (error) {
+      setSubmissionStatus('Ошибка');
+    }
+  };
+
+  const startNewRegistration = () => {
+    setRecognizedDevice(null);
+    setShowForm(true);
+  };
 
   useEffect(() => {
     const fetchAttendance = async () => {
@@ -2739,14 +3769,24 @@ function ParticipantCardPublic({ onBack, events }: { onBack: () => void, events:
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setSubmissionStatus('Сохранение...');
+    const formData = {
+      lastName, firstName, patronymic,
+      fullName: `${lastName} ${firstName} ${patronymic}`.trim(),
+      phone, telegram, whatsapp, maxNumber, city, email,
+      participantStatus,
+      attendedEvents,
+    };
+
     try {
       await addDoc(collection(db, 'participants'), {
-        name, phone, telegram, whatsapp, maxNumber, city, email,
-        participantStatus,
-        attendedEvents,
+        ...formData,
         autoAttendedEvents,
         createdAt: serverTimestamp()
       });
+      
+      // Save to device memory
+      localStorage.setItem('last_participant', JSON.stringify(formData));
+      
       setSubmissionStatus('Карточка сохранена!');
       setTimeout(onBack, 2000);
     } catch (error) {
@@ -2754,14 +3794,53 @@ function ParticipantCardPublic({ onBack, events }: { onBack: () => void, events:
     }
   };
 
+  if (recognizedDevice && !showForm) {
+    return (
+      <div className="p-8 md:p-12 text-center">
+        <div className="w-20 h-20 bg-logo-blue/10 rounded-[32px] flex items-center justify-center mx-auto mb-6 text-logo-blue">
+          <ShieldCheck size={40} />
+        </div>
+        <h2 className="text-2xl font-black mb-2">С возвращением!</h2>
+        <p className="text-slate-500 font-medium mb-8">
+          Вы уже регистрировались на этом устройстве как<br/>
+          <strong className="text-slate-900">{recognizedDevice.fullName}</strong>
+        </p>
+
+        <div className="space-y-3">
+          <button 
+            onClick={handleRecognizedSubmit}
+            disabled={submissionStatus !== null}
+            className="w-full py-5 bg-logo-blue text-white rounded-2xl font-black uppercase tracking-widest hover:bg-blue-600 transition-all active:scale-95 shadow-lg shadow-blue-100 disabled:opacity-50"
+          >
+            {submissionStatus || "Продолжить"}
+          </button>
+          <button 
+            onClick={startNewRegistration}
+            className="w-full py-4 bg-slate-50 text-slate-500 rounded-2xl font-bold text-sm hover:bg-slate-100 transition-all"
+          >
+            Это не я / Другой человек
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-8 md:p-12 max-h-[90vh] overflow-y-auto">
       <h2 className="text-3xl font-black mb-8">Карточка участника</h2>
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="space-y-4">
           <label className="block">
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Основная информация</span>
-            <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="ФИО" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none mt-1" required />
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Фамилия</span>
+            <input type="text" value={lastName} onChange={e => setLastName(e.target.value)} placeholder="Иванов" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none mt-1" required />
+          </label>
+          <label className="block">
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Имя</span>
+            <input type="text" value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="Иван" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none mt-1" required />
+          </label>
+          <label className="block">
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Отчество</span>
+            <input type="text" value={patronymic} onChange={e => setPatronymic(e.target.value)} placeholder="Иванович" className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none mt-1" />
           </label>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2790,6 +3869,9 @@ function ParticipantCardPublic({ onBack, events }: { onBack: () => void, events:
             onChange={e => setParticipantStatus(e.target.value)} 
             className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none appearance-none"
           >
+            <option value="Мастер">Статус: Мастер</option>
+            <option value="Магистр">Статус: Магистр</option>
+            <option value="Ученик">Статус: Ученик</option>
             <option value="Новый">Статус: Новый</option>
             <option value="Постоянный">Статус: Постоянный</option>
             <option value="Слушатель">Статус: Слушатель</option>
