@@ -130,6 +130,7 @@ interface Event {
   totalExpenses?: number;
   netProfit?: number;
   additionalExpenses?: number;
+  expenseList?: { name: string, amount: number }[];
 }
 
 interface Registration {
@@ -285,6 +286,9 @@ function AppContent() {
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [pendingEventForRules, setPendingEventForRules] = useState<Event | null>(null);
   const [showUserFinanceModal, setShowUserFinanceModal] = useState(false);
+  const [showAdminEventModal, setShowAdminEventModal] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [recognizedIdentity, setRecognizedIdentity] = useState<{ uid?: string, fullName: string, email: string } | null>(null);
   const [selectedEventForFinance, setSelectedEventForFinance] = useState<Event | null>(null);
   const [sessionAnchorDate] = useState(() => {
     const d = new Date();
@@ -352,18 +356,17 @@ function AppContent() {
         setUser(u);
         if (u) {
           const profileDoc = await getDoc(doc(db, 'users', u.uid));
+          let currentProfile: UserProfile | null = null;
           if (profileDoc.exists()) {
             const data = profileDoc.data() as UserProfile;
-            // Force admin role for specific email
             if (u.email === 'il17184@gmail.com' && data.role !== 'admin') {
-              const updatedProfile = { ...data, role: 'admin' as const };
-              await setDoc(doc(db, 'users', u.uid), updatedProfile, { merge: true });
-              setProfile(updatedProfile);
+              currentProfile = { ...data, role: 'admin' as const };
+              await setDoc(doc(db, 'users', u.uid), currentProfile, { merge: true });
             } else {
-              setProfile(data);
+              currentProfile = data;
             }
           } else {
-            const newProfile: UserProfile = {
+            currentProfile = {
               uid: u.uid,
               displayName: u.displayName || 'Anonymous',
               email: u.email || '',
@@ -372,23 +375,48 @@ function AppContent() {
               ...(referrerId ? { referrerId } : {})
             };
             await setDoc(doc(db, 'users', u.uid), {
-              ...newProfile,
+              ...currentProfile,
               createdAt: serverTimestamp()
             });
-            setProfile(newProfile);
+          }
+          setProfile(currentProfile);
+          
+          // Save identity to device
+          if (currentProfile) {
+            localStorage.setItem('app_user_identity', JSON.stringify({
+              uid: currentProfile.uid,
+              fullName: currentProfile.firstName ? `${currentProfile.lastName} ${currentProfile.firstName}` : currentProfile.displayName,
+              email: currentProfile.email
+            }));
           }
         } else {
           setProfile(null);
         }
       } catch (err) {
         console.error("Auth profile error:", err);
-        // We still want to stop loading even if profile fetch fails
       } finally {
         setLoading(false);
       }
     });
     return unsubscribe;
   }, [referrerId]);
+
+  // Load recognized identity from device
+  useEffect(() => {
+    const saved = localStorage.getItem('app_user_identity') || localStorage.getItem('last_participant');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setRecognizedIdentity({
+          uid: parsed.uid,
+          fullName: parsed.fullName || `${parsed.lastName || ''} ${parsed.firstName || ''}`.trim(),
+          email: parsed.email
+        });
+      } catch (e) {
+        console.error("Failed to parse identity", e);
+      }
+    }
+  }, []);
 
   // Firestore Listener for Events
   useEffect(() => {
@@ -911,6 +939,10 @@ function AppContent() {
                           setSelectedEventForFinance(event); 
                           setShowUserFinanceModal(true); 
                         }}
+                        onShowAdminInfo={() => {
+                          setSelectedEventForFinance(event);
+                          setShowAdminEventModal(true);
+                        }}
                         isRegistering={registeringEventId === event.id}
                         isAdmin={isAdmin}
                         registrations={registrations}
@@ -1020,7 +1052,16 @@ function AppContent() {
         )}
 
         {showAuthModal && (
-          <AuthRequiredModal onClose={() => setShowAuthModal(false)} onLogin={() => { setShowAuthModal(false); handleLogin(); }} />
+          <AuthRequiredModal 
+            onClose={() => setShowAuthModal(false)} 
+            onLogin={() => { setShowAuthModal(false); handleLogin(); }}
+            recognizedIdentity={recognizedIdentity}
+            onResetIdentity={() => {
+              localStorage.removeItem('app_user_identity');
+              localStorage.removeItem('last_participant');
+              setRecognizedIdentity(null);
+            }}
+          />
         )}
 
         {showRulesModal && pendingEventForRules && (
@@ -1070,11 +1111,12 @@ function AppContent() {
         )}
 
         {showUserFinanceModal && selectedEventForFinance && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowUserFinanceModal(false)}>
             <motion.div 
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               className="bg-white rounded-[40px] p-10 max-w-md w-full shadow-2xl relative"
+              onClick={(e) => e.stopPropagation()}
             >
               <button 
                 onClick={() => setShowUserFinanceModal(false)}
@@ -1119,29 +1161,188 @@ function AppContent() {
                     </div>
 
                     <div className="space-y-3">
-                      <div className="flex items-center justify-between p-5 bg-slate-50 rounded-2xl border border-slate-100 hover:border-slate-200 transition-colors">
+                      <div className="flex items-center justify-between p-5 bg-slate-50 rounded-2xl border border-slate-100">
                         <span className="text-xs font-black uppercase text-slate-400">Наличные</span>
                         <span className="text-lg font-black text-slate-900">{cashPaid.toLocaleString()} ₽</span>
                       </div>
-                      <div className="flex items-center justify-between p-5 bg-slate-50 rounded-2xl border border-slate-100 hover:border-slate-200 transition-colors">
+                      <div className="flex items-center justify-between p-5 bg-slate-50 rounded-2xl border border-slate-100">
                         <span className="text-xs font-black uppercase text-slate-400">Безналично</span>
                         <span className="text-lg font-black text-slate-900">{cardPaid.toLocaleString()} ₽</span>
                       </div>
-                      <div className="flex items-center justify-between p-5 bg-red-50 rounded-2xl border border-red-100 hover:border-red-200 transition-colors">
+                      <div className="flex items-center justify-between p-5 bg-red-50 rounded-2xl border border-red-100">
                         <span className="text-xs font-black uppercase text-red-500">К оплате</span>
                         <span className="text-lg font-black text-red-600">{unpaid.toLocaleString()} ₽</span>
                       </div>
                     </div>
-
-                    <p className="text-[10px] text-center text-slate-400 font-bold uppercase tracking-widest pt-2">
-                      Для проведения оплаты обратитесь к администратору
-                    </p>
                   </div>
                 );
               })()}
             </motion.div>
           </div>
         )}
+
+        {showAdminEventModal && selectedEventForFinance && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowAdminEventModal(false)}>
+            <motion.div 
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className="bg-slate-900 rounded-[40px] p-8 max-w-md w-full shadow-2xl relative border border-white/10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button 
+                onClick={() => setShowAdminEventModal(false)}
+                className="absolute right-6 top-6 p-2 hover:bg-white/10 rounded-xl transition-colors"
+              >
+                <X size={20} className="text-slate-400" />
+              </button>
+
+              <div className="mb-8 pr-12">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="p-2 bg-amber-500/20 rounded-xl text-amber-500">
+                    <ShieldCheck size={20} />
+                  </div>
+                  <p className="text-[10px] font-black uppercase text-amber-500 tracking-widest">Служебная информация</p>
+                </div>
+                <h3 className="text-xl font-black text-white leading-tight">{selectedEventForFinance.title}</h3>
+              </div>
+
+              {(() => {
+                const eventRegs = registrations.filter(r => r.eventId === selectedEventForFinance.id);
+                const totalRegistered = eventRegs.filter(r => r.status !== 'cancelled').length;
+                const totalPaidCount = eventRegs.filter(r => r.paymentStatus === 'paid').length;
+                const cashTotal = eventRegs.reduce((sum, r) => sum + (r.paymentMethod === 'cash' ? r.amountPaid : 0), 0);
+                const cardTotal = eventRegs.reduce((sum, r) => sum + (r.paymentMethod === 'card' ? r.amountPaid : 0), 0);
+
+                return (
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
+                        <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Записано</p>
+                        <p className="text-xl font-black text-white">{totalRegistered}</p>
+                      </div>
+                      <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
+                        <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Оплачено</p>
+                        <p className="text-xl font-black text-white">{totalPaidCount}</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+                        <span className="text-xs font-bold text-slate-400">Наличные (итого)</span>
+                        <span className="text-sm font-black text-green-400">{cashTotal.toLocaleString()} ₽</span>
+                      </div>
+                      <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+                        <span className="text-xs font-bold text-slate-400">Безнал (итого)</span>
+                        <span className="text-sm font-black text-blue-400">{cardTotal.toLocaleString()} ₽</span>
+                      </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-white/10">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-red-400">Дополнительные расходы</p>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+                              if (!SpeechRecognition) return;
+                              const recognition = new SpeechRecognition();
+                              recognition.lang = 'ru-RU';
+                              recognition.onstart = () => setIsListening(true);
+                              recognition.onend = () => setIsListening(false);
+                              recognition.onresult = async (ev: any) => {
+                                const transcript = ev.results[0][0].transcript;
+                                const matches = transcript.match(/(\d+)/g);
+                                if (matches) {
+                                  const amount = Number(matches[matches.length - 1]);
+                                  const name = transcript.replace(matches[matches.length - 1], '').trim() || 'Расход';
+                                  const currentList = selectedEventForFinance.expenseList || [];
+                                  const newList = [...currentList, { name, amount }];
+                                  try {
+                                    await updateDoc(doc(db, 'events', selectedEventForFinance.id), { expenseList: newList });
+                                  } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'events'); }
+                                }
+                              };
+                              recognition.start();
+                            }}
+                            className={`p-1.5 rounded-lg transition-all ${isListening ? 'bg-red-500 text-white animate-pulse' : 'hover:bg-white/10 text-red-500'}`}
+                            title="Добавить голосом (Название + Сумма)"
+                          >
+                            <Mic size={14} />
+                          </button>
+                        </div>
+                        <button 
+                          onClick={async () => {
+                            const newList = [...(selectedEventForFinance.expenseList || []), { name: '', amount: 0 }];
+                            try {
+                              await updateDoc(doc(db, 'events', selectedEventForFinance.id), { expenseList: newList });
+                            } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'events'); }
+                          }}
+                          className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400"
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </div>
+
+                      <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1 scrollbar-hide mb-4">
+                        {(selectedEventForFinance.expenseList || []).map((exp, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <input 
+                              type="text"
+                              value={exp.name}
+                              onChange={async (e) => {
+                                const newList = [...(selectedEventForFinance.expenseList || [])];
+                                newList[idx].name = e.target.value;
+                                try {
+                                  await updateDoc(doc(db, 'events', selectedEventForFinance.id), { expenseList: newList });
+                                } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'events'); }
+                              }}
+                              className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs font-bold text-white flex-1 outline-none focus:border-red-400/50 transition-all"
+                              placeholder="Название статьи"
+                            />
+                            <div className="flex items-center gap-2 w-[110px] shrink-0">
+                              <input 
+                                type="number"
+                                value={exp.amount}
+                                onChange={async (e) => {
+                                const newList = [...(selectedEventForFinance.expenseList || [])];
+                                newList[idx].amount = Number(e.target.value);
+                                try {
+                                  await updateDoc(doc(db, 'events', selectedEventForFinance.id), { expenseList: newList });
+                                } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'events'); }
+                              }}
+                              className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs font-black text-white w-full outline-none focus:border-red-400/50 transition-all text-right"
+                              placeholder="0"
+                            />
+                            <button 
+                              onClick={async () => {
+                                const newList = selectedEventForFinance.expenseList?.filter((_, i) => i !== idx);
+                                try {
+                                  await updateDoc(doc(db, 'events', selectedEventForFinance.id), { expenseList: newList });
+                                } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'events'); }
+                              }}
+                              className="p-1 text-slate-600 hover:text-red-400 transition-colors"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center justify-between p-4 bg-red-500/10 rounded-2xl border border-red-500/20">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-red-400">Итого доп. расходов</span>
+                      <span className="text-sm font-black text-red-400">
+                        {(selectedEventForFinance.expenseList || []).reduce((sum, e) => sum + e.amount, 0).toLocaleString()} ₽
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          </motion.div>
+        </div>
+      )}
 
         {/* --- MOBILE MENU OVERLAY --- */}
         {isMobileMenuOpen && (
@@ -1430,6 +1631,7 @@ interface EventRowProps {
   event: Event;
   onRegister: () => void | Promise<void>;
   onShowFinance?: () => void;
+  onShowAdminInfo?: () => void;
   isRegistering: boolean;
   isAdmin?: boolean;
   registrations?: Registration[];
@@ -1440,13 +1642,13 @@ function EventRow({
   event, 
   onRegister, 
   onShowFinance,
+  onShowAdminInfo,
   isRegistering, 
   isAdmin, 
   registrations = [], 
   financeRecords = [] 
 }: EventRowProps) {
   const [isListening, setIsListening] = useState(false);
-  const [showAdminInfo, setShowAdminInfo] = useState(false);
   const date = getEventDate(event.startTime);
   const day = date.getDate().toString().padStart(2, '0');
   const month = date.toLocaleString('ru', { month: 'short' });
@@ -1481,153 +1683,9 @@ function EventRow({
   return (
     <motion.div 
       whileHover={{ y: -2 }}
-      onClick={() => { if (isAdmin) setShowAdminInfo(true); }}
+      onClick={() => { if (isAdmin) onShowAdminInfo?.(); }}
       className={`relative group bg-white border border-slate-100 rounded-[32px] p-5 md:p-6 flex flex-col md:grid md:grid-cols-[120px_1fr_200px] gap-4 md:gap-6 items-center transition-all hover:shadow-2xl hover:shadow-slate-200/50 ${isAdmin ? 'cursor-pointer' : ''}`}
     >
-      {/* Admin Metrics Window (Modal Style Overlay) */}
-      {isAdmin && showAdminInfo && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[1000] flex items-center justify-center p-4" onClick={(e) => { e.stopPropagation(); setShowAdminInfo(false); }}>
-          <motion.div 
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="bg-slate-900 shadow-2xl rounded-[40px] border border-white/10 text-white w-full max-w-lg overflow-hidden flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="p-8 pb-4 flex items-center justify-between border-b border-white/10">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-amber-500/20 rounded-xl text-amber-500">
-                  <ShieldCheck size={24} />
-                </div>
-                <div>
-                  <h3 className="text-xl font-black uppercase tracking-tight">Служебная информация</h3>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{event.title}</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setShowAdminInfo(false)}
-                className="p-3 hover:bg-white/10 rounded-2xl transition-colors text-slate-400"
-              >
-                <X size={24} />
-              </button>
-            </div>
-
-            <div className="p-8 space-y-8 overflow-y-auto max-h-[70vh]">
-              {/* Personal Status Block for Admin */}
-              <div className="p-6 bg-white/5 rounded-3xl border border-white/10">
-                <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest mb-4">Ваше участие в событии</p>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-xl ${isUserRegistered ? 'bg-green-500/20 text-green-500' : 'bg-slate-500/20 text-slate-500'}`}>
-                      {isUserRegistered ? <Check size={20} /> : <X size={20} />}
-                    </div>
-                    <div>
-                      <p className="text-sm font-black">{isUserRegistered ? 'Вы записаны' : 'Вы не записаны'}</p>
-                      {isUserRegistered && userRegistration && (
-                        <p className={`text-[10px] font-bold uppercase tracking-wider ${
-                          userRegistration.paymentStatus === 'paid' ? 'text-green-400' : 
-                          userRegistration.paymentStatus === 'partial' ? 'text-yellow-400' : 'text-red-400'
-                        }`}>
-                          {userRegistration.paymentStatus === 'paid' ? `Оплачено: ${userRegistration.amountPaid.toLocaleString()} ₽` : 
-                           userRegistration.paymentStatus === 'partial' ? `Частично: ${userRegistration.amountPaid.toLocaleString()} ₽` : 'Не оплачено'}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  {!isUserRegistered && (
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); onRegister(); setShowAdminInfo(false); }}
-                      className="px-4 py-2 bg-white text-slate-900 rounded-xl text-xs font-black uppercase hover:bg-logo-blue hover:text-white transition-all"
-                    >
-                      Записаться
-                    </button>
-                  )}
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-6">
-                <div>
-                  <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Всего записано</p>
-                  <p className="text-3xl font-black">{totalRegistered}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Полных оплат</p>
-                  <p className="text-3xl font-black">{totalPaid}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Наличные (итого)</p>
-                  <p className="text-xl font-bold text-green-400">{cashTotal.toLocaleString()} ₽</p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Безнал (итого)</p>
-                  <p className="text-xl font-bold text-blue-400">{cardTotal.toLocaleString()} ₽</p>
-                </div>
-              </div>
-              
-              <div className="pt-6 border-t border-white/10">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-[10px] font-black uppercase text-red-400/80 tracking-widest">Дополнительные расходы</p>
-                  <button 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-                      if (!SpeechRecognition) return;
-                      const recognition = new SpeechRecognition();
-                      recognition.lang = 'ru-RU';
-                      recognition.onstart = () => setIsListening(true);
-                      recognition.onend = () => setIsListening(false);
-                      recognition.onresult = async (e: any) => {
-                        const transcript = e.results[0][0].transcript;
-                        const num = transcript.replace(/\D/g, '');
-                        if (num) {
-                          try {
-                            await updateDoc(doc(db, 'events', event.id), {
-                              additionalExpenses: Number(num)
-                            });
-                          } catch (err) {
-                             handleFirestoreError(err, OperationType.WRITE, 'events');
-                          }
-                        }
-                      };
-                      recognition.start();
-                    }}
-                    className={`p-2 rounded-xl transition-all ${isListening ? 'bg-red-500 text-white animate-pulse' : 'hover:bg-white/10 text-red-400'}`}
-                  >
-                    <Mic size={18} />
-                  </button>
-                </div>
-                <div className="flex items-center gap-3">
-                  <input 
-                    type="number"
-                    defaultValue={event.additionalExpenses || 0}
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        (e.target as HTMLInputElement).blur();
-                      }
-                    }}
-                    onBlur={async (e) => {
-                      const val = Number(e.target.value);
-                      if (val !== (event.additionalExpenses || 0)) {
-                        try {
-                          await updateDoc(doc(db, 'events', event.id), {
-                            additionalExpenses: val
-                          });
-                        } catch (err) {
-                          handleFirestoreError(err, OperationType.WRITE, 'events');
-                        }
-                      }
-                    }}
-                    className="bg-white/10 border border-white/20 rounded-2xl px-6 py-4 text-lg font-black text-red-400 w-full outline-none focus:border-red-400 transition-all"
-                    placeholder="0"
-                  />
-                  <span className="text-2xl font-black text-red-400">₽</span>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      )}
       <div className="flex md:flex-col items-center justify-center md:border-r border-slate-100 md:pr-6 w-full md:w-auto border-b md:border-b-0 pb-4 md:pb-0">
         <span className="text-4xl md:text-5xl font-black tracking-tighter leading-none">{day}</span>
         <span className="text-[11px] font-black uppercase tracking-widest text-slate-400 ml-3 md:ml-0 md:mt-1">{month}</span>
@@ -1725,8 +1783,8 @@ function EventRow({
           </div>
           {isAdmin && (
             <button 
-              onClick={(e) => { e.stopPropagation(); setShowAdminInfo(!showAdminInfo); }}
-              className={`p-1.5 rounded-lg transition-all ${showAdminInfo ? 'bg-slate-900 text-white' : 'hover:bg-slate-200 text-slate-400'}`}
+              onClick={(e) => { e.stopPropagation(); onShowAdminInfo?.(); }}
+              className={`p-1.5 rounded-lg transition-all hover:bg-slate-200 text-slate-400`}
               title="Показать статистику"
             >
               <Activity size={14} />
@@ -3265,7 +3323,17 @@ function SidebarItem({ icon, label, active, onClick }: { icon: any, label: strin
   );
 }
 
-function AuthRequiredModal({ onClose, onLogin }: { onClose: () => void, onLogin: () => void }) {
+function AuthRequiredModal({ 
+  onClose, 
+  onLogin, 
+  recognizedIdentity, 
+  onResetIdentity 
+}: { 
+  onClose: () => void, 
+  onLogin: () => void,
+  recognizedIdentity?: { fullName: string, email: string } | null,
+  onResetIdentity?: () => void
+}) {
   return (
     <motion.div 
       initial={{ opacity: 0 }} 
@@ -3287,34 +3355,57 @@ function AuthRequiredModal({ onClose, onLogin }: { onClose: () => void, onLogin:
           <ShieldCheck size={40} />
         </div>
         
-        <h3 className="text-2xl font-black mb-4">Вначале необходимо авторизоваться</h3>
-        
-        <div className="space-y-4 text-slate-600 mb-10">
-          <p className="text-sm leading-relaxed">
-            Чтобы записаться на мероприятие, пожалуйста, выполните следующие действия:
-          </p>
-          <ol className="text-sm text-left space-y-3 bg-slate-50 p-6 rounded-3xl border border-slate-100">
-            <li className="flex gap-3">
-              <span className="flex-shrink-0 w-6 h-6 bg-logo-blue text-white rounded-full flex items-center justify-center text-[10px] font-bold">1</span>
-              <span>Нажмите кнопку <strong>«Войти»</strong> в левом сайдбаре.</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="flex-shrink-0 w-6 h-6 bg-logo-blue text-white rounded-full flex items-center justify-center text-[10px] font-bold">2</span>
-              <span>Пройдите авторизацию через Google.</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="flex-shrink-0 w-6 h-6 bg-logo-blue text-white rounded-full flex items-center justify-center text-[10px] font-bold">3</span>
-              <span>После этого вернитесь и нажмите <strong>«Записаться»</strong> снова.</span>
-            </li>
-          </ol>
-        </div>
-        
-        <button 
-          onClick={onLogin}
-          className="w-full py-4 bg-logo-blue text-white rounded-2xl font-black text-sm hover:shadow-xl hover:shadow-logo-blue/20 transition-all active:scale-95"
-        >
-          Авторизоваться сейчас
-        </button>
+        {recognizedIdentity ? (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <h3 className="text-2xl font-black mb-2 tracking-tight">Рады вас видеть снова!</h3>
+            <p className="text-slate-500 font-medium mb-8">
+              Мы узнали ваше устройство. Вы заходили как<br/>
+              <strong className="text-slate-900 text-lg uppercase tracking-tight block mt-1">{recognizedIdentity.fullName}</strong>
+            </p>
+
+            <div className="space-y-3">
+              <button 
+                onClick={onLogin}
+                className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-logo-blue transition-all active:scale-95 shadow-xl shadow-slate-200"
+              >
+                Продолжить вход
+              </button>
+              <button 
+                onClick={onResetIdentity}
+                className="text-xs font-black uppercase tracking-widest text-slate-400 hover:text-red-500 transition-colors block w-full text-center py-2"
+              >
+                Это не я / Другой аккаунт
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <h3 className="text-2xl font-black mb-4">Вначале необходимо авторизоваться</h3>
+            
+            <div className="space-y-4 text-slate-600 mb-10">
+              <p className="text-sm leading-relaxed">
+                Чтобы записаться на мероприятие, пожалуйста:
+              </p>
+              <ol className="text-sm text-left space-y-3 bg-slate-50 p-6 rounded-3xl border border-slate-100">
+                <li className="flex gap-3">
+                  <span className="flex-shrink-0 w-6 h-6 bg-logo-blue text-white rounded-full flex items-center justify-center text-[10px] font-bold">1</span>
+                  <span>Нажмите кнопку <strong>«Авторизоваться»</strong></span>
+                </li>
+                <li className="flex gap-3">
+                  <span className="flex-shrink-0 w-6 h-6 bg-logo-blue text-white rounded-full flex items-center justify-center text-[10px] font-bold">2</span>
+                  <span>Пройдите вход через Google</span>
+                </li>
+              </ol>
+            </div>
+            
+            <button 
+              onClick={onLogin}
+              className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-logo-blue transition-all active:scale-95"
+            >
+              Авторизоваться сейчас
+            </button>
+          </>
+        )}
       </motion.div>
     </motion.div>
   );
@@ -3785,7 +3876,12 @@ function ParticipantCardPublic({ onBack, events }: { onBack: () => void, events:
       });
       
       // Save to device memory
+      const identityData = {
+        fullName: formData.fullName,
+        email: formData.email
+      };
       localStorage.setItem('last_participant', JSON.stringify(formData));
+      localStorage.setItem('app_user_identity', JSON.stringify(identityData));
       
       setSubmissionStatus('Карточка сохранена!');
       setTimeout(onBack, 2000);
