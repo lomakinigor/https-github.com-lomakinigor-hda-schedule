@@ -152,6 +152,7 @@ interface Registration {
   paymentMethod?: 'cash' | 'card';
   participantName?: string;
   registrationDate: any;
+  discount?: number;
 }
 
 interface FinanceRecord {
@@ -1087,17 +1088,24 @@ function AppContent() {
       {/* Admin/Profile/Public Overlays */}
       <AnimatePresence>
         {view === 'admin' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white p-4 md:p-12 overflow-y-auto">
-            <button onClick={() => setView('schedule')} className="absolute top-4 right-4 md:top-8 md:right-8 p-3 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors z-10"><X size={24} /></button>
-            <AdminPanel 
-              events={events} 
-              financeRecords={financeRecords} 
-              registrations={registrations}
-              participantsCount={participantsCount}
-              allUserProfiles={allUserProfiles}
-              leads={participants}
-              user={user}
-            />
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-white flex flex-col">
+            <button 
+              onClick={() => setView('schedule')} 
+              className="fixed top-4 right-4 md:top-8 md:right-8 p-3 bg-white/80 backdrop-blur-md hover:bg-slate-100 rounded-xl transition-colors z-[210] shadow-xl border border-slate-200"
+            >
+              <X size={24} />
+            </button>
+            <div className="flex-1 overflow-y-auto p-4 md:p-12">
+              <AdminPanel 
+                events={events} 
+                financeRecords={financeRecords} 
+                registrations={registrations}
+                participantsCount={participantsCount}
+                allUserProfiles={allUserProfiles}
+                leads={participants}
+                user={user}
+              />
+            </div>
           </motion.div>
         )}
         {view === 'profile' && (
@@ -1217,7 +1225,7 @@ function AppContent() {
               <div className="mb-8">
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-2 h-2 rounded-full bg-logo-blue animate-pulse" />
-                  <p className="text-[10px] font-black uppercase text-logo-blue tracking-widest">Статус вашей записи</p>
+                  <p className="text-[10px] font-black uppercase text-logo-blue tracking-widest">Статус вашей оплаты</p>
                 </div>
                 <h2 className="text-2xl font-black leading-tight">{selectedEventForFinance.title}</h2>
               </div>
@@ -1230,7 +1238,7 @@ function AppContent() {
                 const cashPaid = currentEventFinance.filter(f => f.category === 'Наличные' || f.description?.includes('наличными')).reduce((sum, f) => sum + f.amount, 0);
                 const cardPaid = currentEventFinance.filter(f => f.category === 'Безналично' || f.description?.includes('безнал')).reduce((sum, f) => sum + f.amount, 0);
                 const totalPaid = cashPaid + cardPaid;
-                const unpaid = Math.max(0, (selectedEventForFinance.price || 0) - totalPaid);
+                const unpaid = Math.max(0, (selectedEventForFinance.price || 0) - totalPaid - (reg.discount || 0));
 
                 return (
                   <div className="space-y-6">
@@ -1242,8 +1250,8 @@ function AppContent() {
                       <div>
                         <p className="text-[10px] font-black uppercase opacity-60">Финансовый итог</p>
                         <p className="text-xl font-black uppercase tracking-tighter">
-                          {reg.paymentStatus === 'paid' ? 'Оплачено полностью' :
-                           reg.paymentStatus === 'partial' ? 'Оплачено частично' : 'Не оплачено'}
+                          {reg.paymentStatus === 'paid' ? (reg.paymentMethod === 'cash' ? 'Наличные' : 'Безнал') :
+                           reg.paymentStatus === 'partial' ? 'Долг' : 'Не оплачено'}
                         </p>
                       </div>
                       <ShieldCheck size={32} />
@@ -1258,8 +1266,12 @@ function AppContent() {
                         <span className="text-xs font-black uppercase text-slate-400">Безналично</span>
                         <span className="text-lg font-black text-slate-900">{cardPaid.toLocaleString()} ₽</span>
                       </div>
+                      <div className="flex items-center justify-between p-5 bg-blue-50 rounded-2xl border border-blue-100">
+                        <span className="text-xs font-black uppercase text-blue-500">Скидка</span>
+                        <span className="text-lg font-black text-blue-600">{(reg.discount || 0).toLocaleString()} ₽</span>
+                      </div>
                       <div className="flex items-center justify-between p-5 bg-red-50 rounded-2xl border border-red-100">
-                        <span className="text-xs font-black uppercase text-red-500">К оплате</span>
+                        <span className="text-xs font-black uppercase text-red-500">Долг</span>
                         <span className="text-lg font-black text-red-600">{unpaid.toLocaleString()} ₽</span>
                       </div>
                     </div>
@@ -1947,7 +1959,7 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
   leads: any[],
   user: any
 }) {
-  const [subView, setSubView] = useState<'create-event' | 'event-analytics' | 'finance' | 'participants' | 'prompts'>('create-event');
+  const [subView, setSubView] = useState<'create-event' | 'event-analytics' | 'finance' | 'participants' | 'prompts' | 'general-analytics'>('create-event');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [speakerName, setSpeakerName] = useState('');
@@ -1970,6 +1982,24 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
   const [status, setStatus] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<Event[]>([]);
   const [manualAdditionalExpenses, setManualAdditionalExpenses] = useState(0);
+  const calendarScrollRef = useRef<HTMLDivElement>(null);
+  const todayRef = useRef<HTMLDivElement>(null);
+  const [selectedDayEvents, setSelectedDayEvents] = useState<Event[]>([]);
+
+  // Scroll to today's week when opening create-event
+  useEffect(() => {
+    if (subView === 'create-event') {
+      // Use requestAnimationFrame to ensure DOM is rendered
+      requestAnimationFrame(() => {
+        if (todayRef.current && calendarScrollRef.current) {
+          const container = calendarScrollRef.current;
+          const target = todayRef.current;
+          const scrollPos = target.offsetTop - container.offsetTop - 20;
+          container.scrollTo({ top: scrollPos, behavior: 'auto' });
+        }
+      });
+    }
+  }, [subView]);
 
   // Derived Metrics for Служебная информация
   const matchedEvent = events.find(e => e.title.toLowerCase() === title.toLowerCase() && e.speakerName.toLowerCase() === speakerName.toLowerCase());
@@ -2237,6 +2267,16 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
         >
           Участники
         </button>
+        <button 
+          onClick={() => setSubView('general-analytics')}
+          className={`px-6 py-4 md:py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
+            subView === 'general-analytics' 
+              ? 'bg-slate-900 text-white shadow-lg shadow-slate-200' 
+              : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
+          }`}
+        >
+          Общая аналитика
+        </button>
         {(user?.email?.toLowerCase() === 'il17184@gmail.com') && (
           <button 
             onClick={() => setSubView('prompts')}
@@ -2475,7 +2515,146 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
 
       {subView === 'create-event' && (
         <form onSubmit={handleSubmit} className="space-y-8">
-          {/* Block 1: Основная информация */}
+          {/* Block 4: Календарь (4 Weeks View with Scroll) */}
+          <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-6 flex flex-col">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-black flex items-center gap-3">
+                <CalendarIcon className="text-emerald-500" /> Календарь (Расписание)
+              </h3>
+              <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 px-3 py-1 rounded-full">
+                -1 Месяц — +3 Месяца
+              </span>
+            </div>
+            
+            <div className="grid grid-cols-7 gap-2 text-center mb-0 pr-4">
+              {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((d) => (
+                <div key={d} className="text-[9px] font-black uppercase text-slate-400">
+                  {d}
+                </div>
+              ))}
+            </div>
+
+            <div 
+              ref={calendarScrollRef}
+              className="grid grid-cols-7 gap-2 max-h-[320px] overflow-y-auto pr-2 custom-scrollbar scroll-smooth"
+            >
+              {(() => {
+                const now = new Date();
+                
+                // Calculate start of range: 1 month back, then to Monday
+                const startRange = new Date(now);
+                startRange.setMonth(now.getMonth() - 1);
+                const dayStart = startRange.getDay();
+                const diffStart = startRange.getDate() - dayStart + (dayStart === 0 ? -6 : 1);
+                startRange.setDate(diffStart);
+                startRange.setHours(0, 0, 0, 0);
+
+                // Calculate end of range: 3 months forward, then to Sunday
+                const endRange = new Date(now);
+                endRange.setMonth(now.getMonth() + 3);
+                const dayEndIdx = endRange.getDay();
+                const diffEnd = endRange.getDate() + (dayEndIdx === 0 ? 0 : 7 - dayEndIdx);
+                endRange.setDate(diffEnd);
+                endRange.setHours(23, 59, 59, 999);
+
+                const days = [];
+                const totalDays = Math.round((endRange.getTime() - startRange.getTime()) / (1000 * 60 * 60 * 24));
+                
+                for (let i = 0; i < totalDays; i++) {
+                  const currentDayDate = new Date(startRange);
+                  currentDayDate.setDate(startRange.getDate() + i);
+                  
+                  const dayEnd = new Date(currentDayDate);
+                  dayEnd.setHours(23, 59, 59, 999);
+
+                  const realToday = new Date();
+                  realToday.setHours(0, 0, 0, 0);
+                  const isToday = currentDayDate.getTime() === realToday.getTime();
+                  
+                  const dayEvents = events.filter(e => {
+                    const eventDate = getEventDate(e.startTime);
+                    if (eventDate >= currentDayDate && eventDate <= dayEnd) return true;
+                    if (e.sessionDates) {
+                      return e.sessionDates.some(sd => {
+                        const sDate = getEventDate(sd);
+                        return sDate >= currentDayDate && sDate <= dayEnd;
+                      });
+                    }
+                    return false;
+                  });
+                  const hasEvent = dayEvents.length > 0;
+
+                  days.push(
+                    <div 
+                      key={i} 
+                      ref={isToday ? todayRef : null}
+                      onClick={() => hasEvent && setSelectedDayEvents(dayEvents)}
+                      className={`h-14 md:h-16 flex flex-col items-center justify-center rounded-xl md:rounded-2xl border transition-all relative ${
+                        hasEvent ? 'cursor-pointer' : ''
+                      } ${
+                        isToday 
+                          ? 'bg-slate-900 border-slate-900 text-white shadow-lg scale-95 z-10' 
+                          : hasEvent 
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-900 shadow-sm hover:bg-emerald-100' 
+                            : 'bg-slate-50 border-slate-100 text-slate-500 hover:bg-slate-200'
+                      }`}
+                    >
+                      <span className="text-[10px] font-black opacity-50 mb-0.5">{currentDayDate.getDate()}</span>
+                      <span className="text-[8px] font-bold uppercase truncate w-full text-center px-1">
+                        {currentDayDate.toLocaleDateString('ru', { month: 'short' }).replace('.', '')}
+                      </span>
+                      {hasEvent && !isToday && (
+                        <div className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-emerald-500 rounded-full ring-2 ring-white" />
+                      )}
+                    </div>
+                  );
+                }
+                return days;
+              })()}
+            </div>
+
+            {selectedDayEvents.length > 0 && (
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3 relative">
+                <button 
+                  onClick={() => setSelectedDayEvents([])}
+                  className="absolute top-2 right-2 p-1 text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  <X size={14} />
+                </button>
+                {selectedDayEvents.map(e => (
+                  <div key={e.id} className="border-b border-slate-200 last:border-0 pb-2 last:pb-0">
+                    <p className="text-sm font-black text-slate-900">{e.title}</p>
+                    <p className="text-[10px] font-bold text-logo-blue uppercase tracking-widest">{e.speakerName}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest">
+                  Диапазон: -1 месяц до +3 месяцев
+                </p>
+              </div>
+              <button 
+                type="button"
+                onClick={() => {
+                  if (todayRef.current && calendarScrollRef.current) {
+                    const container = calendarScrollRef.current;
+                    const target = todayRef.current;
+                    const scrollPos = target.offsetTop - container.offsetTop - 20;
+                    container.scrollTo({ top: scrollPos, behavior: 'smooth' });
+                  }
+                }}
+                className="text-[9px] font-black uppercase text-emerald-600 hover:text-emerald-700 flex items-center gap-1 transition-all"
+              >
+                <RefreshCcw size={10} /> Вернуться к сегодня
+              </button>
+            </div>
+          </div>
+
+          {/* Block 1: Публичная информация (Moved below calendar) */}
           <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-6 flex flex-col">
             <h3 className="text-xl font-black flex items-center gap-3">
               <Eye className="text-logo-blue" /> Публичная информация
@@ -2715,95 +2894,7 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
               </button>
             </div>
           </div>
-
-          <div className="grid grid-cols-1 gap-8">
-            {/* Block 4: Календарь */}
-          <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-6 overflow-hidden">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xl font-black flex items-center gap-3">
-                <CalendarIcon className="text-emerald-500" /> Календарь
-              </h3>
-              <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 px-3 py-1 rounded-full">
-                {new Date().toLocaleDateString('ru', { day: 'numeric', month: 'short' })} — {new Date(new Date().getTime() + 29 * 24 * 60 * 60 * 1000).toLocaleDateString('ru', { day: 'numeric', month: 'short' })}
-              </span>
-            </div>
-            
-            <div className="grid grid-cols-7 gap-2 text-center mb-2">
-              {(() => {
-                const now = new Date();
-                return Array.from({ length: 7 }, (_, i) => {
-                  const d = new Date(now);
-                  d.setDate(d.getDate() + i);
-                  return (
-                    <div key={i} className="text-[9px] font-black uppercase text-slate-400">
-                      {d.toLocaleDateString('ru-RU', { weekday: 'short' })}
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-
-            <div className="grid grid-cols-7 gap-2">
-              {(() => {
-                const now = new Date();
-                const days = [];
-
-                for (let i = 0; i < 30; i++) {
-                  const currentDayDate = new Date(now);
-                  currentDayDate.setDate(now.getDate() + i);
-                  currentDayDate.setHours(0, 0, 0, 0);
-                  
-                  const dayEnd = new Date(currentDayDate);
-                  dayEnd.setHours(23, 59, 59, 999);
-
-                  const isToday = i === 0;
-                  
-                  const hasEvent = events.some(e => {
-                    const eventDate = getEventDate(e.startTime);
-                    if (eventDate >= currentDayDate && eventDate <= dayEnd) return true;
-                    if (e.sessionDates) {
-                      return e.sessionDates.some(sd => {
-                        const sDate = getEventDate(sd);
-                        return sDate >= currentDayDate && sDate <= dayEnd;
-                      });
-                    }
-                    return false;
-                  });
-
-                  days.push(
-                    <div 
-                      key={i} 
-                      className={`h-10 md:h-12 flex flex-col items-center justify-center rounded-xl md:rounded-2xl border transition-all relative ${
-                        isToday 
-                          ? 'bg-slate-900 border-slate-900 text-white shadow-lg' 
-                          : hasEvent 
-                            ? 'bg-emerald-50 border-emerald-200 text-emerald-900 shadow-sm' 
-                            : 'bg-slate-50 border-slate-100 text-slate-500'
-                      }`}
-                    >
-                      <span className="text-[9px] font-black opacity-50 mb-0.5">{currentDayDate.getDate()}</span>
-                      <span className="text-[8px] font-bold uppercase truncate w-full text-center px-1">
-                        {currentDayDate.toLocaleDateString('ru', { month: 'short' }).replace('.', '')}
-                      </span>
-                      {hasEvent && !isToday && (
-                        <div className="absolute top-1 right-1 w-1.5 h-1.5 bg-emerald-500 rounded-full" />
-                      )}
-                    </div>
-                  );
-                }
-                return days;
-              })()}
-            </div>
-
-            <div className="mt-4 p-4 bg-emerald-50 rounded-2xl border border-emerald-100 flex items-center gap-3">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest">
-                График на месяц вперед с сегодняшнего дня
-              </p>
-            </div>
-          </div>
-        </div>
-      </form>
+        </form>
       )}
       {subView === 'finance' && (
         <FinanceView events={events} records={financeRecords} registrations={registrations} />
@@ -2816,6 +2907,18 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
           registrations={registrations}
           participantsCount={participantsCount} 
         />
+      )}
+
+      {subView === 'general-analytics' && (
+        <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50">
+          <div className="text-center py-12">
+            <TrendingUp size={48} className="mx-auto text-slate-200 mb-4" />
+            <h3 className="text-xl font-black mb-2">Общая аналитика</h3>
+            <p className="text-slate-400 text-sm max-w-md mx-auto">
+              Раздел находится в разработке. Здесь будет отображаться сводная статистика по всем проектам и филиалам.
+            </p>
+          </div>
+        </div>
       )}
 
       {subView === 'prompts' && (
