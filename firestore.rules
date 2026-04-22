@@ -82,18 +82,25 @@ service cloud.firestore {
     }
 
     function getUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      let path = /databases/$(database)/documents/users/$(request.auth.uid);
+      return exists(path) ? get(path).data : null;
+    }
+
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
     }
 
     function isAdmin() {
+      let data = getUserData();
       return isAuthenticated() && (
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'admin') ||
+        (data != null && data.role == 'admin') ||
         (request.auth.token.email == "il17184@gmail.com" && request.auth.token.email_verified == true)
       );
     }
 
     function isSpeaker() {
-      return isAuthenticated() && getUserData().role == 'speaker';
+      let data = getUserData();
+      return isAuthenticated() && data != null && data.role == 'speaker';
     }
 
     function isValidUser(data) {
@@ -104,19 +111,6 @@ service cloud.firestore {
              data.email is string && data.email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     }
 
-    function isValidEvent(data) {
-      return data.keys().hasAll(['title', 'speakerName', 'location', 'startTime', 'endTime', 'price', 'maxParticipants', 'registeredCount', 'status']) &&
-             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
-             data.location is string &&
-             data.startTime is timestamp &&
-             data.endTime is timestamp &&
-             data.endTime > data.startTime &&
-             data.price is number && data.price >= 0 &&
-             data.maxParticipants is number && data.maxParticipants > 0 &&
-             data.registeredCount is number && data.registeredCount >= 0 &&
-             data.status in ['planned', 'active', 'completed', 'cancelled'];
-    }
-
     function isValidParticipant(data) {
       return data.keys().hasAll(['name', 'phone', 'createdAt']) &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
@@ -124,6 +118,22 @@ service cloud.firestore {
              (!('participantStatus' in data) || data.participantStatus in ['Новый', 'Постоянный', 'Слушатель', 'Студент', 'Выпускник']) &&
              (!('autoAttendedEvents' in data) || data.autoAttendedEvents is list) &&
              data.createdAt is timestamp;
+    }
+
+    function isValidEvent(data) {
+      return data.keys().hasAll(['title', 'speakerName', 'location', 'startTime', 'endTime', 'price', 'maxParticipants', 'registeredCount', 'status']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.speakerName is string &&
+             data.location is string &&
+             data.startTime is timestamp &&
+             data.endTime is timestamp &&
+             data.endTime > data.startTime &&
+             data.price is number && data.price >= 0 &&
+             data.maxParticipants is number && data.maxParticipants > 0 &&
+             data.registeredCount is number && data.registeredCount >= 0 &&
+             data.status in ['planned', 'active', 'completed', 'cancelled'] &&
+             (!('expenseList' in data) || (data.expenseList is list && data.expenseList.size() <= 100)) &&
+             (!('additionalExpenses' in data) || data.additionalExpenses is number);
     }
 
     function isValidRegistration(data) {
@@ -136,6 +146,7 @@ service cloud.firestore {
              data.amountPaid is number &&
              data.paymentStatus in ['unpaid', 'partial', 'paid'] &&
              (!('participantName' in data) || data.participantName is string) &&
+             (!('cancelledDate' in data) || data.cancelledDate is timestamp) &&
              data.registrationDate is timestamp;
     }
 
@@ -160,20 +171,12 @@ service cloud.firestore {
       allow create: if isValidParticipant(request.resource.data);
     }
 
-    // Events collection
-    match /events/{eventId} {
-      allow read: if true; 
-      allow create: if isAdmin() || isSpeaker();
-      allow update: if isAdmin() || isSpeaker() || (isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['registeredCount']));
-      allow delete: if isAdmin();
-    }
-
     // Registrations collection
     match /registrations/{regId} {
       allow get: if isAuthenticated() && (
         isAdmin() || 
         (resource != null && resource.data.userId == request.auth.uid) ||
-        (resource == null && regId.size() >= request.auth.uid.size() && regId.substring(0, request.auth.uid.size()) == request.auth.uid)
+        (resource == null && isValidId(regId) && regId.size() >= request.auth.uid.size() && regId.substring(0, request.auth.uid.size()) == request.auth.uid)
       );
       allow list: if isAuthenticated() && (
         isAdmin() || 
@@ -181,11 +184,32 @@ service cloud.firestore {
       );
       allow create: if isAuthenticated() && 
                     request.resource.data.userId == request.auth.uid &&
-                    isValidRegistration(request.resource.data);
-      allow update: if isAdmin() || (
+                    isValidRegistration(request.resource.data) &&
+                    exists(/databases/$(database)/documents/events/$(request.resource.data.eventId));
+      allow update: if (isAdmin() || (
         isAuthenticated() && 
         resource.data.userId == request.auth.uid && 
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+        request.resource.data.userId == resource.data.userId &&
+        request.resource.data.eventId == resource.data.eventId &&
+        isValidRegistration(request.resource.data)
+      ));
+      allow delete: if isAdmin();
+    }
+
+    // Events collection
+    match /events/{eventId} {
+      allow read: if true; 
+      allow create: if (isAdmin() || isSpeaker()) && isValidEvent(request.resource.data);
+      allow update: if isValidId(eventId) && (
+        (isAdmin() && isValidEvent(request.resource.data)) ||
+        (isSpeaker() && resource.data.speakerId == request.auth.uid && isValidEvent(request.resource.data)) ||
+        // Action: Increment/Decrement registration counter
+        (isAuthenticated() && 
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['registeredCount']) &&
+         request.resource.data.registeredCount is number &&
+         (request.resource.data.registeredCount == resource.data.get('registeredCount', 0) + 1 || 
+          request.resource.data.registeredCount == resource.data.get('registeredCount', 0) - 1)
+        )
       );
       allow delete: if isAdmin();
     }

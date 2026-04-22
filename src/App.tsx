@@ -1,4 +1,4 @@
-import React, { useState, useEffect, FormEvent, ErrorInfo, ReactNode } from 'react';
+import React, { useState, useEffect, useRef, FormEvent, ErrorInfo, ReactNode } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import { 
@@ -15,6 +15,7 @@ import {
   PieChart,
   Pie
 } from 'recharts';
+import { GoogleGenAI } from '@google/genai';
 import { 
   Calendar as CalendarIcon, 
   User, 
@@ -47,7 +48,11 @@ import {
   BarChart3,
   PieChart as PieChartIcon,
   Activity,
-  Eye
+  Eye,
+  RefreshCcw,
+  Sparkles,
+  Zap,
+  Megaphone
 } from 'lucide-react';
 import { 
   signInWithPopup, 
@@ -68,7 +73,8 @@ import {
   doc,
   setDoc,
   updateDoc,
-  increment
+  increment,
+  writeBatch
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { handleFirestoreError, OperationType } from './lib/error-logging';
@@ -120,6 +126,7 @@ interface Event {
   sessionsCount?: number;
   sessionDates?: any[];
   status?: 'planned' | 'active' | 'completed' | 'cancelled';
+  createdAt?: any;
   baseExpenses?: {
     rent: number;
     speakerFee: number;
@@ -285,9 +292,11 @@ function AppContent() {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [pendingEventForRules, setPendingEventForRules] = useState<Event | null>(null);
+  const [pendingEventAfterLogin, setPendingEventAfterLogin] = useState<Event | null>(null);
   const [showUserFinanceModal, setShowUserFinanceModal] = useState(false);
   const [showAdminEventModal, setShowAdminEventModal] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
   const [recognizedIdentity, setRecognizedIdentity] = useState<{ uid?: string, fullName: string, email: string } | null>(null);
   const [selectedEventForFinance, setSelectedEventForFinance] = useState<Event | null>(null);
   const [sessionAnchorDate] = useState(() => {
@@ -296,7 +305,7 @@ function AppContent() {
     return d;
   });
 
-  const isAdmin = profile?.role === 'admin' || user?.email === 'il17184@gmail.com';
+  const isAdmin = profile?.role === 'admin' || user?.email?.toLowerCase() === 'il17184@gmail.com';
 
   // Filter States
   const [filterTitle, setFilterTitle] = useState('');
@@ -418,6 +427,15 @@ function AppContent() {
     }
   }, []);
 
+  // Continue registration after successful login
+  useEffect(() => {
+    if (user && pendingEventAfterLogin) {
+      const eventToReg = pendingEventAfterLogin;
+      setPendingEventAfterLogin(null);
+      handleRegister(eventToReg);
+    }
+  }, [user, pendingEventAfterLogin]);
+
   // Firestore Listener for Events
   useEffect(() => {
     try {
@@ -514,9 +532,15 @@ function AppContent() {
         
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const regs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Registration));
+        // Critical: Only update state if the array actually changed or we got fresh data
         setRegistrations(regs);
       }, (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'registrations');
+        // If Permission Denied occurs, it means the security rules are blocking us
+        if (err.message.includes('permission-denied')) {
+          console.warn("Registrations listener permission issue. This might be temporary during profile creation.");
+        } else {
+          handleFirestoreError(err, OperationType.LIST, 'registrations');
+        }
       });
       return unsubscribe;
     } catch (err) {
@@ -709,9 +733,25 @@ function AppContent() {
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
     try {
-      await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider);
+      const loggedUser = result.user;
+      
+      // Ensure user document exists for role-based rules
+      const userRef = doc(db, 'users', loggedUser.uid);
+      const userSnap = await getDoc(userRef);
+      
+      if (!userSnap.exists()) {
+        await setDoc(userRef, {
+          uid: loggedUser.uid,
+          displayName: loggedUser.displayName || 'Посетитель',
+          email: loggedUser.email,
+          role: 'participant',
+          bonusBalance: 0,
+          createdAt: serverTimestamp()
+        });
+      }
     } catch (err) {
-      logger.log("Login failed", err);
+      console.error("Login failed", err);
     }
   };
 
@@ -719,49 +759,91 @@ function AppContent() {
 
   const handleRegister = async (event: Event) => {
     if (!user) {
+      setPendingEventAfterLogin(event);
       setShowAuthModal(true);
       return;
     }
 
-    // Check if already registered
-    const existingReg = registrations.find(r => r.eventId === event.id && r.userId === user.uid);
-    if (existingReg) {
-      // Logic for existing registration click removed (now handled by specific sub-button)
+    // Check if already registered (explicit check for 'registered' status)
+    const activeReg = registrations.find(r => r.eventId === event.id && r.userId === user.uid && r.status === 'registered');
+    if (activeReg) {
       return;
     }
 
+    setRegisteringEventId(event.id);
     setPendingEventForRules(event);
     setShowRulesModal(true);
   };
 
   const finalizeRegistration = async () => {
-    if (!pendingEventForRules || !user) return;
-    const event = pendingEventForRules;
-    setRegisteringEventId(event.id);
+    if (!pendingEventForRules || !user) {
+      setRegisteringEventId(null);
+      setShowRulesModal(false);
+      return;
+    }
+    const eventForReg = pendingEventForRules;
+    setRegisteringEventId(eventForReg.id);
     setShowRulesModal(false);
     
     try {
-      const regId = `${user.uid}_${event.id}`;
-      await setDoc(doc(db, 'registrations', regId), {
+      const regId = `${user.uid}_${eventForReg.id}`;
+      const batch = writeBatch(db);
+      
+      // 1. Set the registration document
+      batch.set(doc(db, 'registrations', regId), {
         userId: user.uid,
-        eventId: event.id,
+        eventId: eventForReg.id,
         participantName: user.displayName || 'Anonymous',
         status: 'registered',
         paid: false,
-        totalPrice: event.price || 0,
+        totalPrice: eventForReg.price || 0,
         amountPaid: 0,
         paymentStatus: 'unpaid',
         registrationDate: serverTimestamp()
       });
 
-      await updateDoc(doc(db, 'events', event.id), {
+      // 2. Atomically increment the source-of-truth count in the event document
+      batch.update(doc(db, 'events', eventForReg.id), {
         registeredCount: increment(1)
       });
 
+      await batch.commit();
       setPendingEventForRules(null);
-      alert('Вы успешно записались на мероприятие!');
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `registrations/${user.uid}_${event.id}`);
+      console.error("Registration error:", err);
+      handleFirestoreError(err, OperationType.WRITE, `registrations/${user.uid}_${eventForReg.id}`);
+    } finally {
+      setRegisteringEventId(null);
+    }
+  };
+
+  const handleCancelRegistration = async (eventToCancel: Event) => {
+    if (!user) return;
+    
+    // Find the active registration to get its real Firestore ID
+    const activeReg = registrations.find(r => r.eventId === eventToCancel.id && r.userId === user.uid && r.status === 'registered');
+    if (!activeReg) return;
+
+    setRegisteringEventId(eventToCancel.id);
+    try {
+      // Use writeBatch for atomicity to prevent UI flicker/state desync
+      const batch = writeBatch(db);
+      
+      // 1. Mark the registration as cancelled using its TRUE ID
+      batch.update(doc(db, 'registrations', activeReg.id), {
+        status: 'cancelled',
+        cancelledDate: serverTimestamp()
+      });
+
+      // 2. Decrement the event counter atomically
+      batch.update(doc(db, 'events', eventToCancel.id), {
+        registeredCount: increment(-1)
+      });
+
+      await batch.commit();
+    } catch (err) {
+      console.error("Cancellation error:", err);
+      handleFirestoreError(err, OperationType.WRITE, `registrations/${activeReg.id}`);
     } finally {
       setRegisteringEventId(null);
     }
@@ -934,7 +1016,9 @@ function AppContent() {
                       <EventRow 
                         key={event.id} 
                         event={event} 
+                        user={user}
                         onRegister={() => handleRegister(event)}
+                        onCancelRegister={() => handleCancelRegistration(event)}
                         onShowFinance={() => { 
                           setSelectedEventForFinance(event); 
                           setShowUserFinanceModal(true); 
@@ -1012,6 +1096,7 @@ function AppContent() {
               participantsCount={participantsCount}
               allUserProfiles={allUserProfiles}
               leads={participants}
+              user={user}
             />
           </motion.div>
         )}
@@ -1065,7 +1150,7 @@ function AppContent() {
         )}
 
         {showRulesModal && pendingEventForRules && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
             <motion.div 
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
@@ -1100,7 +1185,11 @@ function AppContent() {
                   Принимаю и записываюсь
                 </button>
                 <button 
-                  onClick={() => { setShowRulesModal(false); setPendingEventForRules(null); }}
+                  onClick={() => { 
+                    setShowRulesModal(false); 
+                    setPendingEventForRules(null);
+                    setRegisteringEventId(null);
+                  }}
                   className="w-full py-4 text-slate-400 font-bold hover:text-slate-600 transition-all"
                 >
                   Отмена
@@ -1196,153 +1285,188 @@ function AppContent() {
                 <X size={20} className="text-slate-400" />
               </button>
 
-              <div className="mb-8 pr-12">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="p-2 bg-amber-500/20 rounded-xl text-amber-500">
-                    <ShieldCheck size={20} />
-                  </div>
-                  <p className="text-[10px] font-black uppercase text-amber-500 tracking-widest">Служебная информация</p>
-                </div>
-                <h3 className="text-xl font-black text-white leading-tight">{selectedEventForFinance.title}</h3>
-              </div>
-
               {(() => {
-                const eventRegs = registrations.filter(r => r.eventId === selectedEventForFinance.id);
-                const totalRegistered = eventRegs.filter(r => r.status !== 'cancelled').length;
-                const totalPaidCount = eventRegs.filter(r => r.paymentStatus === 'paid').length;
-                const cashTotal = eventRegs.reduce((sum, r) => sum + (r.paymentMethod === 'cash' ? r.amountPaid : 0), 0);
-                const cardTotal = eventRegs.reduce((sum, r) => sum + (r.paymentMethod === 'card' ? r.amountPaid : 0), 0);
+                // IMPORTANT: Find the latest state from the events array to avoid stale modal data
+                const currentEvent = events.find(e => e.id === selectedEventForFinance.id) || selectedEventForFinance;
+                
+                const eventRegs = registrations.filter(r => r.eventId === currentEvent.id);
+                const activeRegsForModal = eventRegs.filter(r => r.status === 'registered');
+                const totalRegistered = activeRegsForModal.length;
+                const totalPaidCount = activeRegsForModal.filter(r => r.paymentStatus === 'paid').length;
+                const cashTotal = activeRegsForModal.reduce((sum, r) => sum + (r.paymentMethod === 'cash' ? r.amountPaid : 0), 0);
+                const cardTotal = activeRegsForModal.reduce((sum, r) => sum + (r.paymentMethod === 'card' ? r.amountPaid : 0), 0);
 
                 return (
-                  <div className="space-y-6">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
-                        <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Записано</p>
-                        <p className="text-xl font-black text-white">{totalRegistered}</p>
-                      </div>
-                      <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
-                        <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Оплачено</p>
-                        <p className="text-xl font-black text-white">{totalPaidCount}</p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
-                        <span className="text-xs font-bold text-slate-400">Наличные (итого)</span>
-                        <span className="text-sm font-black text-green-400">{cashTotal.toLocaleString()} ₽</span>
-                      </div>
-                      <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
-                        <span className="text-xs font-bold text-slate-400">Безнал (итого)</span>
-                        <span className="text-sm font-black text-blue-400">{cardTotal.toLocaleString()} ₽</span>
-                      </div>
-                    </div>
-
-                    <div className="pt-4 border-t border-white/10">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-2">
-                          <p className="text-[10px] font-black uppercase tracking-widest text-red-400">Дополнительные расходы</p>
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-                              if (!SpeechRecognition) return;
-                              const recognition = new SpeechRecognition();
-                              recognition.lang = 'ru-RU';
-                              recognition.onstart = () => setIsListening(true);
-                              recognition.onend = () => setIsListening(false);
-                              recognition.onresult = async (ev: any) => {
-                                const transcript = ev.results[0][0].transcript;
-                                const matches = transcript.match(/(\d+)/g);
-                                if (matches) {
-                                  const amount = Number(matches[matches.length - 1]);
-                                  const name = transcript.replace(matches[matches.length - 1], '').trim() || 'Расход';
-                                  const currentList = selectedEventForFinance.expenseList || [];
-                                  const newList = [...currentList, { name, amount }];
-                                  try {
-                                    await updateDoc(doc(db, 'events', selectedEventForFinance.id), { expenseList: newList });
-                                  } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'events'); }
-                                }
-                              };
-                              recognition.start();
-                            }}
-                            className={`p-1.5 rounded-lg transition-all ${isListening ? 'bg-red-500 text-white animate-pulse' : 'hover:bg-white/10 text-red-500'}`}
-                            title="Добавить голосом (Название + Сумма)"
-                          >
-                            <Mic size={14} />
-                          </button>
+                  <>
+                    <div className="mb-8 pr-12">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="p-2 bg-amber-500/20 rounded-xl text-amber-500">
+                          <ShieldCheck size={20} />
                         </div>
-                        <button 
-                          onClick={async () => {
-                            const newList = [...(selectedEventForFinance.expenseList || []), { name: '', amount: 0 }];
-                            try {
-                              await updateDoc(doc(db, 'events', selectedEventForFinance.id), { expenseList: newList });
-                            } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'events'); }
-                          }}
-                          className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400"
-                        >
-                          <Plus size={14} />
-                        </button>
+                        <p className="text-[10px] font-black uppercase text-amber-500 tracking-widest">Служебная информация</p>
+                      </div>
+                      <h3 className="text-xl font-black text-white leading-tight">{currentEvent.title}</h3>
+                    </div>
+
+                    <div className="space-y-6">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
+                          <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Записано</p>
+                          <p className="text-xl font-black text-white">{totalRegistered}</p>
+                        </div>
+                        <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
+                          <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Оплачено</p>
+                          <p className="text-xl font-black text-white">{totalPaidCount}</p>
+                        </div>
                       </div>
 
-                      <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1 scrollbar-hide mb-4">
-                        {(selectedEventForFinance.expenseList || []).map((exp, idx) => (
-                          <div key={idx} className="flex items-center gap-2">
-                            <input 
-                              type="text"
-                              value={exp.name}
-                              onChange={async (e) => {
-                                const newList = [...(selectedEventForFinance.expenseList || [])];
-                                newList[idx].name = e.target.value;
-                                try {
-                                  await updateDoc(doc(db, 'events', selectedEventForFinance.id), { expenseList: newList });
-                                } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'events'); }
-                              }}
-                              className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs font-bold text-white flex-1 outline-none focus:border-red-400/50 transition-all"
-                              placeholder="Название статьи"
-                            />
-                            <div className="flex items-center gap-2 w-[110px] shrink-0">
-                              <input 
-                                type="number"
-                                value={exp.amount}
-                                onChange={async (e) => {
-                                const newList = [...(selectedEventForFinance.expenseList || [])];
-                                newList[idx].amount = Number(e.target.value);
-                                try {
-                                  await updateDoc(doc(db, 'events', selectedEventForFinance.id), { expenseList: newList });
-                                } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'events'); }
-                              }}
-                              className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs font-black text-white w-full outline-none focus:border-red-400/50 transition-all text-right"
-                              placeholder="0"
-                            />
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+                          <span className="text-xs font-bold text-slate-400">Наличные (итого)</span>
+                          <span className="text-sm font-black text-green-400">{cashTotal.toLocaleString()} ₽</span>
+                        </div>
+                        <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+                          <span className="text-xs font-bold text-slate-400">Безнал (итого)</span>
+                          <span className="text-sm font-black text-blue-400">{cardTotal.toLocaleString()} ₽</span>
+                        </div>
+                      </div>
+
+                      <div className="pt-4 border-t border-white/10">
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center gap-2">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-red-400">Дополнительные расходы</p>
                             <button 
-                              onClick={async () => {
-                                const newList = selectedEventForFinance.expenseList?.filter((_, i) => i !== idx);
-                                try {
-                                  await updateDoc(doc(db, 'events', selectedEventForFinance.id), { expenseList: newList });
-                                } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'events'); }
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isListening && recognitionRef.current) {
+                                  recognitionRef.current.abort();
+                                  setIsListening(false);
+                                  return;
+                                }
+                                const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+                                if (!SpeechRecognition) return;
+                                const recognition = new SpeechRecognition();
+                                recognitionRef.current = recognition;
+                                recognition.lang = 'ru-RU';
+                                recognition.onstart = () => setIsListening(true);
+                                recognition.onend = () => {
+                                  setIsListening(false);
+                                  recognitionRef.current = null;
+                                };
+                                recognition.onresult = async (ev: any) => {
+                                  const transcript = ev.results[0][0].transcript;
+                                  const matches = transcript.match(/(\d+)/g);
+                                  if (matches) {
+                                    const amount = Number(matches[matches.length - 1]);
+                                    const name = transcript.replace(matches[matches.length - 1], '').trim() || 'Расход';
+                                    const currentList = currentEvent.expenseList || [];
+                                    const newList = [...currentList, { name, amount }];
+                                    const total = newList.reduce((sum, e) => sum + e.amount, 0);
+                                    try {
+                                      await updateDoc(doc(db, 'events', currentEvent.id), { 
+                                        expenseList: newList,
+                                        additionalExpenses: total
+                                      });
+                                    } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'events'); }
+                                  }
+                                };
+                                recognition.start();
                               }}
-                              className="p-1 text-slate-600 hover:text-red-400 transition-colors"
+                              className={`p-1.5 rounded-lg transition-all ${isListening ? 'bg-red-500 text-white animate-pulse' : 'hover:bg-white/10 text-red-500'}`}
+                              title={isListening ? "Отменить запись" : "Добавить голосом (Название + Сумма)"}
                             >
-                              <X size={12} />
+                              {isListening ? <X size={14} /> : <Mic size={14} />}
                             </button>
                           </div>
+                          <button 
+                            onClick={async () => {
+                              const newList = [...(currentEvent.expenseList || []), { name: '', amount: 0 }];
+                              const total = newList.reduce((sum, e) => sum + e.amount, 0);
+                              try {
+                                await updateDoc(doc(db, 'events', currentEvent.id), { 
+                                  expenseList: newList,
+                                  additionalExpenses: total
+                                });
+                              } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'events'); }
+                            }}
+                            className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400"
+                          >
+                            <Plus size={14} />
+                          </button>
                         </div>
-                      ))}
-                    </div>
 
-                    <div className="flex items-center justify-between p-4 bg-red-500/10 rounded-2xl border border-red-500/20">
-                      <span className="text-[10px] font-black uppercase tracking-widest text-red-400">Итого доп. расходов</span>
-                      <span className="text-sm font-black text-red-400">
-                        {(selectedEventForFinance.expenseList || []).reduce((sum, e) => sum + e.amount, 0).toLocaleString()} ₽
-                      </span>
+                        <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1 scrollbar-hide mb-4">
+                          {(currentEvent.expenseList || []).map((exp, idx) => (
+                            <div key={idx} className="flex items-center gap-2">
+                              <input 
+                                type="text"
+                                value={exp.name}
+                                onChange={async (e) => {
+                                  const newList = [...(currentEvent.expenseList || [])];
+                                  newList[idx].name = e.target.value;
+                                  const total = newList.reduce((sum, e) => sum + e.amount, 0);
+                                  try {
+                                    await updateDoc(doc(db, 'events', currentEvent.id), { 
+                                      expenseList: newList,
+                                      additionalExpenses: total
+                                    });
+                                  } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'events'); }
+                                }}
+                                className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs font-bold text-white flex-1 outline-none focus:border-red-400/50 transition-all"
+                                placeholder="Название статьи"
+                              />
+                              <div className="flex items-center gap-2 w-[110px] shrink-0">
+                                <input 
+                                  type="number"
+                                  value={exp.amount}
+                                  onChange={async (e) => {
+                                    const newList = [...(currentEvent.expenseList || [])];
+                                    newList[idx].amount = Number(e.target.value);
+                                    const total = newList.reduce((sum, e) => sum + e.amount, 0);
+                                    try {
+                                      await updateDoc(doc(db, 'events', currentEvent.id), { 
+                                        expenseList: newList,
+                                        additionalExpenses: total
+                                      });
+                                    } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'events'); }
+                                  }}
+                                  className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs font-black text-white w-full outline-none focus:border-red-400/50 transition-all text-right"
+                                  placeholder="0"
+                                />
+                                <button 
+                                  onClick={async () => {
+                                    const newList = currentEvent.expenseList?.filter((_, i) => i !== idx);
+                                    const total = newList?.reduce((sum, e) => sum + e.amount, 0) || 0;
+                                    try {
+                                      await updateDoc(doc(db, 'events', currentEvent.id), { 
+                                        expenseList: newList,
+                                        additionalExpenses: total
+                                      });
+                                    } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'events'); }
+                                  }}
+                                  className="p-1 text-slate-600 hover:text-red-400 transition-colors"
+                                >
+                                  <X size={12} />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="flex items-center justify-between p-4 bg-red-500/10 rounded-2xl border border-red-500/20">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-red-400">Итого доп. расходов</span>
+                          <span className="text-sm font-black text-red-400">
+                            {(currentEvent.expenseList || []).reduce((sum, e) => sum + e.amount, 0).toLocaleString()} ₽
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              );
-            })()}
-          </motion.div>
-        </div>
-      )}
+                  </>
+                );
+              })()}
+            </motion.div>
+          </div>
+        )}
 
         {/* --- MOBILE MENU OVERLAY --- */}
         {isMobileMenuOpen && (
@@ -1629,7 +1753,9 @@ function SidebarContent({
 interface EventRowProps {
   key?: string | number;
   event: Event;
+  user: FirebaseUser | null;
   onRegister: () => void | Promise<void>;
+  onCancelRegister?: () => void | Promise<void>;
   onShowFinance?: () => void;
   onShowAdminInfo?: () => void;
   isRegistering: boolean;
@@ -1640,7 +1766,9 @@ interface EventRowProps {
 
 function EventRow({ 
   event, 
+  user,
   onRegister, 
+  onCancelRegister,
   onShowFinance,
   onShowAdminInfo,
   isRegistering, 
@@ -1648,17 +1776,25 @@ function EventRow({
   registrations = [], 
   financeRecords = [] 
 }: EventRowProps) {
-  const [isListening, setIsListening] = useState(false);
   const date = getEventDate(event.startTime);
   const day = date.getDate().toString().padStart(2, '0');
   const month = date.toLocaleString('ru', { month: 'short' });
-  const registeredCount = event.registeredCount || 0;
-  const isFull = event.maxParticipants && registeredCount >= event.maxParticipants;
+  
+  // 1. Single true source of truth for registration status
+  const currentUserId = user?.uid;
+  const activeRegistration = registrations.find(r => r.eventId === event.id && r.userId === currentUserId && r.status === 'registered');
+  const isRegistered = !!activeRegistration;
 
-  const currentUserId = auth.currentUser?.uid;
-  const userRegistration = registrations.find(r => r.eventId === event.id && r.userId === currentUserId);
-  const isUserRegistered = !!userRegistration;
+  // 2. Base count calculation: Total participants except the current user if they are registered
+  // This allows accurate display for non-admins who don't see others in the 'registrations' array
+  const totalInDb = event.registeredCount || 0;
+  const baseCount = isRegistered ? Math.max(0, totalInDb - 1) : totalInDb;
 
+  // 3. Displayed count: baseCount + (isRegistered ? 1 : 0)
+  const displayedCount = baseCount + (isRegistered ? 1 : 0);
+  
+  const isFull = !isRegistered && event.maxParticipants && displayedCount >= event.maxParticipants;
+  
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'paid': return 'bg-green-500';
@@ -1668,12 +1804,11 @@ function EventRow({
     }
   };
 
-  // Служебная информация (Computed)
-  const eventRegs = registrations.filter(r => r.eventId === event.id);
-  const totalRegistered = eventRegs.filter(r => r.status !== 'cancelled').length;
-  const totalPaid = eventRegs.filter(r => r.paymentStatus === 'paid').length;
-  const cashTotal = eventRegs.reduce((sum, r) => sum + (r.paymentMethod === 'cash' ? r.amountPaid : 0), 0);
-  const cardTotal = eventRegs.reduce((sum, r) => sum + (r.paymentMethod === 'card' ? r.amountPaid : 0), 0);
+  // Service Info (Admin & Stats)
+  const eventRegsForStats = registrations.filter(r => r.eventId === event.id && r.status === 'registered');
+  const totalPaid = eventRegsForStats.filter(r => r.paymentStatus === 'paid').length;
+  const cashTotal = eventRegsForStats.reduce((sum, r) => sum + (r.paymentMethod === 'cash' ? r.amountPaid : 0), 0);
+  const cardTotal = eventRegsForStats.reduce((sum, r) => sum + (r.paymentMethod === 'card' ? r.amountPaid : 0), 0);
   
   // Дополнительные расходы (Manual + Computed if any)
   const additionalExpenses = (event.additionalExpenses || 0) + financeRecords
@@ -1750,26 +1885,33 @@ function EventRow({
       </div>
 
       <div className="flex flex-col items-center md:items-end w-full md:w-auto pt-2 md:pt-0">
+        {isRegistered && (
+          <div className="mb-2 px-3 py-1 bg-green-50 rounded-lg flex items-center gap-1.5 border border-green-100 self-center md:self-end">
+            <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+            <span className="text-[10px] font-black text-green-600 uppercase tracking-widest">Вы записаны</span>
+          </div>
+        )}
         <button 
-          onClick={onRegister}
-          disabled={isRegistering || (isFull && !isUserRegistered)}
+          id={`event-action-${event.id}`}
+          onClick={(e) => { e.stopPropagation(); isRegistered ? onCancelRegister?.() : onRegister(); }}
+          disabled={isRegistering || (!!user && isFull && !isRegistered)}
           className={`w-full md:w-auto px-10 py-5 md:py-4 rounded-2xl font-bold text-sm transition-all active:scale-95 shadow-xl shadow-slate-200 disabled:opacity-50 ${
-            isUserRegistered 
-              ? 'bg-blue-50 text-logo-blue border border-blue-100 hover:bg-blue-100' 
+            isRegistered 
+              ? 'bg-red-50 text-red-500 border border-red-100 hover:bg-red-100' 
               : 'bg-slate-900 text-white hover:bg-logo-blue'
           }`}
         >
-          {isRegistering ? 'Запись...' : isUserRegistered ? 'Вы записаны' : isFull ? 'Мест нет' : 'Записаться'}
+          {isRegistering ? (isRegistered ? 'Отмена...' : 'Запись...') : isRegistered ? 'Отменить запись' : (isFull && user) ? 'Мест нет' : 'Записаться'}
         </button>
-        {isUserRegistered && userRegistration && (
+        {isRegistered && activeRegistration && (
           <button 
             onClick={(e) => { e.stopPropagation(); onShowFinance?.(); }}
             className="mt-3 flex items-center gap-2 hover:bg-slate-50 px-3 py-1.5 rounded-xl transition-all border border-transparent hover:border-slate-200 group/status"
           >
-            <div className={`w-2.5 h-2.5 rounded-full ${getStatusColor(userRegistration.paymentStatus)} shadow-sm group-hover/status:scale-110 transition-transform`} />
+            <div className={`w-2.5 h-2.5 rounded-full ${getStatusColor(activeRegistration.paymentStatus)} shadow-sm group-hover/status:scale-110 transition-transform`} />
             <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-1">
-              {userRegistration.paymentStatus === 'paid' ? 'Оплачено' : 
-               userRegistration.paymentStatus === 'partial' ? 'Частично' : 'Не оплачено'}
+              {activeRegistration.paymentStatus === 'paid' ? 'Оплачено' : 
+               activeRegistration.paymentStatus === 'partial' ? 'Частично' : 'Не оплачено'}
               <ChevronRight size={10} className="text-slate-300" />
             </span>
           </button>
@@ -1778,7 +1920,7 @@ function EventRow({
           <div className={`flex items-center gap-2 flex-1 ${isFull ? 'text-red-600' : 'text-slate-500'}`}>
             <Users size={12} className={isFull ? 'text-red-400' : 'text-slate-400'} />
             <span className={`text-[10px] font-black uppercase tracking-widest ${isFull ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-100'}`}>
-              {registeredCount} / {event.maxParticipants || '∞'} ЗАПИСАНО
+              {displayedCount} / {event.maxParticipants || '∞'} ЗАПИСАНО
             </span>
           </div>
           {isAdmin && (
@@ -1796,8 +1938,16 @@ function EventRow({
   );
 }
 
-function AdminPanel({ events, financeRecords, registrations, participantsCount, allUserProfiles, leads }: { events: Event[], financeRecords: FinanceRecord[], registrations: Registration[], participantsCount: number, allUserProfiles: UserProfile[], leads: any[] }) {
-  const [subView, setSubView] = useState<'events' | 'finance' | 'analytics' | 'participants'>('events');
+function AdminPanel({ events, financeRecords, registrations, participantsCount, allUserProfiles, leads, user }: { 
+  events: Event[], 
+  financeRecords: FinanceRecord[], 
+  registrations: Registration[], 
+  participantsCount: number, 
+  allUserProfiles: UserProfile[], 
+  leads: any[],
+  user: any
+}) {
+  const [subView, setSubView] = useState<'create-event' | 'event-analytics' | 'finance' | 'participants' | 'prompts'>('create-event');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [speakerName, setSpeakerName] = useState('');
@@ -1816,6 +1966,7 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
   const [maxParticipants, setMaxParticipants] = useState(25);
   const [additionalDates, setAdditionalDates] = useState<string[]>([]);
   const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<Event[]>([]);
   const [manualAdditionalExpenses, setManualAdditionalExpenses] = useState(0);
@@ -1824,17 +1975,18 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
   const matchedEvent = events.find(e => e.title.toLowerCase() === title.toLowerCase() && e.speakerName.toLowerCase() === speakerName.toLowerCase());
   const eventRegs = matchedEvent ? registrations.filter(r => r.eventId === matchedEvent.id) : [];
   
-  const totalRegistered = eventRegs.filter(r => r.status !== 'cancelled').length;
-  const totalPaid = eventRegs.filter(r => r.paymentStatus === 'paid').length;
-  const cashTotal = eventRegs.reduce((sum, r) => sum + (r.paymentMethod === 'cash' ? r.amountPaid : 0), 0);
-  const cardTotal = eventRegs.reduce((sum, r) => sum + (r.paymentMethod === 'card' ? r.amountPaid : 0), 0);
+  const activeRegsSummary = eventRegs.filter(r => r.status !== 'cancelled');
+  const totalRegistered = activeRegsSummary.length;
+  const totalPaid = activeRegsSummary.filter(r => r.paymentStatus === 'paid').length;
+  const cashTotal = activeRegsSummary.reduce((sum, r) => sum + (r.paymentMethod === 'cash' ? r.amountPaid : 0), 0);
+  const cardTotal = activeRegsSummary.reduce((sum, r) => sum + (r.paymentMethod === 'card' ? r.amountPaid : 0), 0);
   
   // Global Analytics calculations
   const globalCashRevenue = registrations
-    .filter(r => r.paymentMethod === 'cash' && r.paymentStatus === 'paid')
+    .filter(r => r.status !== 'cancelled' && r.paymentMethod === 'cash' && r.paymentStatus === 'paid')
     .reduce((sum, r) => sum + (r.amountPaid || 0), 0);
   const globalCardRevenue = registrations
-    .filter(r => r.paymentMethod === 'card' && r.paymentStatus === 'paid')
+    .filter(r => r.status !== 'cancelled' && r.paymentMethod === 'card' && r.paymentStatus === 'paid')
     .reduce((sum, r) => sum + (r.amountPaid || 0), 0);
   const globalUnderpayments = registrations
     .filter(r => r.status !== 'cancelled')
@@ -1877,6 +2029,11 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
   };
 
   const startVoiceInput = () => {
+    if (isListening && recognitionRef.current) {
+      recognitionRef.current.abort();
+      setIsListening(false);
+      return;
+    }
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
       alert('Ваш браузер не поддерживает голосовой ввод.');
@@ -1884,13 +2041,20 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
     }
 
     const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
     recognition.lang = 'ru-RU';
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
 
     recognition.onstart = () => setIsListening(true);
-    recognition.onend = () => setIsListening(false);
-    recognition.onerror = () => setIsListening(false);
+    recognition.onend = () => {
+      setIsListening(false);
+      recognitionRef.current = null;
+    };
+    recognition.onerror = () => {
+      setIsListening(false);
+      recognitionRef.current = null;
+    };
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript.toLowerCase();
       
@@ -1998,26 +2162,64 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
     }
   };
 
+  const syncAllEventCounts = async () => {
+    setStatus('Синхронизация...');
+    try {
+      for (const event of events) {
+        const trueCount = registrations.filter(r => r.eventId === event.id && r.status === 'registered').length;
+        if (event.registeredCount !== trueCount) {
+          await updateDoc(doc(db, 'events', event.id), {
+            registeredCount: trueCount
+          });
+        }
+      }
+      setStatus('Синхронизация завершена!');
+      setTimeout(() => setStatus(null), 3000);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'events');
+      setStatus('Ошибка синхронизации');
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto p-8">
-      <div className="mb-8">
+      <div className="mb-8 flex items-center justify-between">
         <h2 className="text-4xl font-black tracking-tight">Управление системой</h2>
+        <button 
+          onClick={syncAllEventCounts}
+          disabled={status?.includes('Синхронизация')}
+          className="flex items-center gap-2 px-4 py-2 bg-amber-50 text-amber-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-amber-100 transition-all disabled:opacity-50"
+          title="Синхронизировать счетчики участников всех мероприятий"
+        >
+          <RefreshCcw size={14} className={status?.includes('Синхронизация') ? 'animate-spin' : ''} />
+          {status?.includes('Синхронизация') ? 'Синхронизация...' : 'Пересчитать счетчики'}
+        </button>
       </div>
 
-      <div className="flex flex-col md:flex-row gap-4 mb-12">
+      <div className="flex flex-wrap gap-4 mb-12">
         <button 
-          onClick={() => setSubView('events')}
-          className={`px-6 py-4 md:py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all w-full md:w-auto ${
-            subView === 'events' 
+          onClick={() => setSubView('create-event')}
+          className={`px-6 py-4 md:py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
+            subView === 'create-event' 
               ? 'bg-slate-900 text-white shadow-lg shadow-slate-200' 
               : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
           }`}
         >
-          Мероприятия
+          Создать мероприятие
+        </button>
+        <button 
+          onClick={() => setSubView('event-analytics')}
+          className={`px-6 py-4 md:py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
+            subView === 'event-analytics' 
+              ? 'bg-slate-900 text-white shadow-lg shadow-slate-200' 
+              : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
+          }`}
+        >
+          Аналитика мероприятий
         </button>
         <button 
           onClick={() => setSubView('finance')}
-          className={`px-6 py-4 md:py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all w-full md:w-auto ${
+          className={`px-6 py-4 md:py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
             subView === 'finance' 
               ? 'bg-slate-900 text-white shadow-lg shadow-slate-200' 
               : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
@@ -2026,18 +2228,8 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
           Финансы
         </button>
         <button 
-          onClick={() => setSubView('analytics')}
-          className={`px-6 py-4 md:py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all w-full md:w-auto ${
-            subView === 'analytics' 
-              ? 'bg-slate-900 text-white shadow-lg shadow-slate-200' 
-              : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
-          }`}
-        >
-          Аналитика
-        </button>
-        <button 
           onClick={() => setSubView('participants')}
-          className={`px-6 py-4 md:py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all w-full md:w-auto ${
+          className={`px-6 py-4 md:py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
             subView === 'participants' 
               ? 'bg-slate-900 text-white shadow-lg shadow-slate-200' 
               : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
@@ -2045,13 +2237,51 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
         >
           Участники
         </button>
+        {(user?.email?.toLowerCase() === 'il17184@gmail.com') && (
+          <button 
+            onClick={() => setSubView('prompts')}
+            className={`px-6 py-4 md:py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
+              subView === 'prompts' 
+                ? 'bg-logo-blue text-white shadow-lg shadow-logo-blue/20' 
+                : 'bg-logo-blue/5 text-logo-blue hover:bg-logo-blue/10'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Megaphone size={14} />
+              <span>Публиковать</span>
+            </div>
+          </button>
+        )}
       </div>
 
       {/* Tab Content */}
       {subView === 'participants' && (
         <div className="space-y-6">
           <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50">
-            <h3 className="text-xl font-black mb-6">Реестр участников (Единый список)</h3>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-black">Реестр участников (Единый список)</h3>
+              <div className="px-4 py-2 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Всего участников</p>
+                <p className="text-lg font-black text-slate-900">
+                  {(() => {
+                    const participantMapCount: Record<string, boolean> = {};
+                    allUserProfiles.forEach(up => {
+                      const ln = (up.lastName || '').trim();
+                      const fn = (up.firstName || '').trim();
+                      if (ln || fn) participantMapCount[`${ln} ${fn}`.toLowerCase()] = true;
+                    });
+                    leads.forEach(l => {
+                      const full = l.fullName || `${l.lastName || ''} ${l.firstName || ''}`.trim();
+                      if (full) participantMapCount[full.toLowerCase()] = true;
+                    });
+                    registrations.filter(r => r.status !== 'cancelled').forEach(reg => {
+                      if (reg.participantName) participantMapCount[reg.participantName.trim().toLowerCase()] = true;
+                    });
+                    return Object.keys(participantMapCount).length;
+                  })()}
+                </p>
+              </div>
+            </div>
             <div className="space-y-4">
               {(() => {
                 // Aggregate participants by FIO
@@ -2243,7 +2473,7 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
         </div>
       )}
 
-      {subView === 'events' && (
+      {subView === 'create-event' && (
         <form onSubmit={handleSubmit} className="space-y-8">
           {/* Block 1: Основная информация */}
           <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-6 flex flex-col">
@@ -2270,8 +2500,9 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
                       className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-all ${
                         isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
                       }`}
+                      title={isListening ? "Отменить запись" : "Голосовой ввод"}
                     >
-                      <Mic size={14} />
+                      {isListening ? <X size={14} /> : <Mic size={14} />}
                     </button>
                   </div>
                 </div>
@@ -2485,104 +2716,8 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
             </div>
           </div>
 
-          {/* Block 2: Служебная информация (Computed Metrics) */}
-          <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-6">
-            <h3 className="text-xl font-black flex items-center gap-3">
-              <ShieldCheck className="text-amber-500" /> Служебная информация
-            </h3>
-            
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-6">
-              <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100">
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Записалось</p>
-                <p className="text-2xl font-black text-slate-900">{totalRegistered}</p>
-              </div>
-              <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100">
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Оплатило</p>
-                <p className="text-2xl font-black text-slate-900">{totalPaid}</p>
-              </div>
-              <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100">
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Наличные</p>
-                <p className="text-2xl font-black text-slate-900">{cashTotal.toLocaleString()} ₽</p>
-              </div>
-              <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100">
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Безналичные</p>
-                <p className="text-2xl font-black text-slate-900">{cardTotal.toLocaleString()} ₽</p>
-              </div>
-              <div className="p-5 bg-slate-50 rounded-2xl border border-white shadow-inner shadow-slate-200/50 flex flex-col justify-between group/expense">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-red-400">Дополнительные расходы</p>
-                  <button 
-                    onClick={(e) => { e.preventDefault(); startVoiceInput(); }}
-                    className={`p-1.5 rounded-lg transition-all ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-red-50 text-red-400 hover:bg-red-100'}`}
-                  >
-                    <Mic size={14} />
-                  </button>
-                </div>
-                <div className="relative mt-2">
-                  <input 
-                    type="number" 
-                    value={manualAdditionalExpenses || ''} 
-                    onChange={(e) => setManualAdditionalExpenses(Number(e.target.value))}
-                    placeholder="0"
-                    className="w-full bg-transparent text-2xl font-black text-red-600 outline-none border-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                  />
-                  <span className="absolute right-0 bottom-1 text-red-400 font-black text-sm">₽</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 flex items-center gap-3">
-              <AlertCircle size={16} className="text-amber-500" />
-              <p className="text-[10px] font-bold text-amber-700 uppercase tracking-widest">
-                ДАННЫЕ В ЭТОМ БЛОКЕ РАСЧИТЫВАЮТСЯ АВТОМАТИЧЕСКИ
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {/* Block 3: Аналитика */}
-            <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-6">
-              <h3 className="text-xl font-black flex items-center gap-3">
-                <PieChartIcon className="text-indigo-500" /> Аналитика
-              </h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                  <p className="text-[9px] font-black uppercase text-slate-400 mb-1">Участники</p>
-                  <p className="text-xl font-black">{participantsCount}</p>
-                </div>
-                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                  <p className="text-[9px] font-black uppercase text-slate-400 mb-1">Активные встречи</p>
-                  <p className="text-xl font-black">{events.filter(e => e.status === 'active' || e.status === 'planned').length}</p>
-                </div>
-                
-                <div className="col-span-2 space-y-4">
-                  <div className="p-4 bg-green-50 rounded-2xl border border-green-100 flex justify-between items-center">
-                    <p className="text-[9px] font-black uppercase text-green-600">Наличные</p>
-                    <p className="text-lg font-black text-green-700">{globalCashRevenue.toLocaleString()} ₽</p>
-                  </div>
-                  <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 flex justify-between items-center">
-                    <p className="text-[9px] font-black uppercase text-blue-600">Безналичные</p>
-                    <p className="text-lg font-black text-blue-700">{globalCardRevenue.toLocaleString()} ₽</p>
-                  </div>
-                  <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 flex justify-between items-center">
-                    <div className="flex flex-col">
-                      <p className="text-[9px] font-black uppercase text-amber-600">Недоплаты</p>
-                      <p className="text-[8px] text-amber-500 font-bold uppercase tracking-tighter">Ожидаемые поступления</p>
-                    </div>
-                    <p className="text-lg font-black text-amber-700">{globalUnderpayments.toLocaleString()} ₽</p>
-                  </div>
-                </div>
-
-                <div className="col-span-2 p-5 bg-indigo-600 rounded-[24px] shadow-lg shadow-indigo-100 text-white">
-                  <p className="text-[9px] font-black uppercase opacity-60 mb-1">Общая выручка</p>
-                  <p className="text-3xl font-black">
-                    {(globalCashRevenue + globalCardRevenue).toLocaleString()} ₽
-                  </p>
-                </div>
-              </div>
-            </div>
-
-          {/* Block 4: Календарь */}
+          <div className="grid grid-cols-1 gap-8">
+            {/* Block 4: Календарь */}
           <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50 space-y-6 overflow-hidden">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-black flex items-center gap-3">
@@ -2674,7 +2809,7 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
         <FinanceView events={events} records={financeRecords} registrations={registrations} />
       )}
 
-      {subView === 'analytics' && (
+      {subView === 'event-analytics' && (
         <AnalyticsDashboard 
           events={events} 
           records={financeRecords} 
@@ -2682,6 +2817,191 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
           participantsCount={participantsCount} 
         />
       )}
+
+      {subView === 'prompts' && (
+        <PromptsView events={events} financeRecords={financeRecords} registrations={registrations} />
+      )}
+    </div>
+  );
+}
+
+function PromptsView({ events, financeRecords, registrations }: { events: Event[], financeRecords: FinanceRecord[], registrations: Registration[] }) {
+  const [generatedPost, setGeneratedPost] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const generatePost = async () => {
+    setLoading(true);
+    setGeneratedPost(null);
+    console.log("Starting post generation...");
+    try {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        console.error("GEMINI_API_KEY is missing");
+        throw new Error("GEMINI_API_KEY is not set");
+      }
+      
+      const ai = new GoogleGenAI({ apiKey });
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      
+      const recentEvents = events.filter(e => {
+        if (!e.createdAt) return false;
+        const created = e.createdAt?.toDate ? e.createdAt.toDate() : new Date(e.createdAt);
+        return !isNaN(created.getTime()) && created > yesterday;
+      });
+
+      const recentRegistrations = registrations.filter(r => {
+        if (!r.registrationDate) return false;
+        const regDate = r.registrationDate?.toDate ? r.registrationDate.toDate() : new Date(r.registrationDate);
+        return !isNaN(regDate.getTime()) && regDate > yesterday;
+      });
+
+      const context = `
+        New events in last 24h: ${recentEvents.map(e => `${e.title} (Speaker: ${e.speakerName}, Price: ${e.price} руб)`).join(', ') || 'None'}
+        Total registrations in last 24h: ${recentRegistrations.length}
+        Total participants in system: ${registrations.length}
+        New revenue today (approx): ${recentRegistrations.reduce((sum, r) => sum + (r.amountPaid || 0), 0)} руб
+      `;
+
+      const prompt = `
+        Ты — остроумный и живой разработчик (вайбкодер) этого проекта. 
+        Твоя задача: написать пост в блог по правилам из BLOG_RULES.md на основе активности за последние 24 часа.
+
+        ПРАВИЛА ИЗ BLOG_RULES.md:
+        1. Тон: Легкий, человечный, с иронией и самоиронией. Никакого официоза.
+        2. Язык: Короткие предложения, понятные слова. Если термин сложный — объясни его.
+        3. Формат: Обязательно выдай 4 блока: [site], [telegram], [max], [vk].
+        4. Если активности (новых событий/регистраций) нет — напиши смешной пост о том, что "вайбкодер спал" или "код отдыхает".
+        5. Дата поста: ${new Date().toISOString().split('T')[0]}.
+
+        КОНТЕКСТ ЗА ПОСЛЕДНИЕ 24 ЧАСА:
+        ${context}
+
+        Выдай результат строго в формате:
+        [site]
+        Текст для сайта...
+
+        [telegram]
+        Текст для телеграма...
+
+        [max]
+        Текст для MAX...
+
+        [vk]
+        Текст для VK...
+      `;
+
+      const result = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt
+      });
+      setGeneratedPost(result.text || "Не удалось получить текст ответа.");
+    } catch (error) {
+      console.error("Post generation error:", error);
+      setGeneratedPost("Ошибка генерации поста. Проверьте GEMINI_API_KEY в настройках.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyToClipboard = (text: string, platform: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(platform);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  const parsePosts = (text: string) => {
+    const sections: Record<string, string> = {};
+    const platforms = ['site', 'telegram', 'max', 'vk'];
+    platforms.forEach(p => {
+      const match = text.match(new RegExp(`\\[${p}\\]([\\s\\S]*?)(?=\\[|$)`, 'i'));
+      if (match) sections[p] = match[1].trim();
+    });
+    return sections;
+  };
+
+  const posts = generatedPost ? parsePosts(generatedPost) : {};
+  const hasParsedPosts = Object.keys(posts).length > 0;
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-xl shadow-slate-200/50">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-8">
+          <div>
+            <h3 className="text-xl font-black flex items-center gap-3">
+              <Sparkles className="text-amber-500" /> Генератор контента
+            </h3>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">
+              На основе BLOG_RULES.md и активности за 24ч
+            </p>
+          </div>
+          <button 
+            onClick={generatePost}
+            disabled={loading}
+            className="w-full md:w-auto px-8 py-4 bg-logo-blue text-white rounded-2xl font-black uppercase text-[10px] tracking-widest hover:shadow-xl shadow-logo-blue/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {loading ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <span>Генерация...</span>
+              </>
+            ) : (
+              <>
+                <Zap size={14} />
+                <span>Сформировать посты</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {!generatedPost && !loading && (
+          <div className="py-20 text-center bg-slate-50 rounded-[32px] border border-dashed border-slate-200">
+            <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center mx-auto mb-4 border border-slate-100 shadow-sm">
+              <Sparkles className="text-slate-300" size={32} />
+            </div>
+            <p className="text-slate-400 font-bold text-sm">Нажмите кнопку выше, чтобы создать контент за последние сутки</p>
+          </div>
+        )}
+
+        {generatedPost && !hasParsedPosts && (
+          <div className="p-6 bg-amber-50 border border-amber-200 rounded-[32px] mb-6">
+            <p className="text-[10px] font-black uppercase text-amber-600 mb-2">Ответ системы (не удалось распознать формат):</p>
+            <div className="text-sm text-slate-700 whitespace-pre-wrap bg-white p-4 rounded-xl border border-amber-100">
+              {generatedPost}
+            </div>
+          </div>
+        )}
+
+        {generatedPost && hasParsedPosts && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {['site', 'telegram', 'max', 'vk'].map((platform) => {
+              const content = posts[platform] || 'Контент не сгенерирован для данной площадки';
+              return (
+                <div key={platform} className="bg-slate-50 rounded-[32px] p-6 border border-slate-100 flex flex-col h-full hover:border-logo-blue/20 transition-colors group">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 bg-white rounded-xl flex items-center justify-center border border-slate-200 group-hover:border-logo-blue/20 transition-colors shadow-sm">
+                        <FileText size={14} className="text-slate-400 group-hover:text-logo-blue transition-colors" />
+                      </div>
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{platform}</span>
+                    </div>
+                    <button 
+                      onClick={() => copyToClipboard(content, platform)}
+                      className="p-2.5 bg-white rounded-xl border border-slate-200 hover:bg-slate-50 transition-all active:scale-95 shadow-sm"
+                      title="Скопировать"
+                    >
+                      {copied === platform ? <Check size={16} className="text-green-500" /> : <Copy size={16} className="text-slate-400" />}
+                    </button>
+                  </div>
+                  <div className="text-sm text-slate-700 whitespace-pre-wrap flex-1 bg-white p-5 rounded-2xl border border-slate-100 overflow-y-auto max-h-[350px] leading-relaxed custom-scrollbar">
+                    {content}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2689,10 +3009,10 @@ function AdminPanel({ events, financeRecords, registrations, participantsCount, 
 function AnalyticsDashboard({ events, records, registrations, participantsCount }: { events: Event[], records: FinanceRecord[], registrations: Registration[], participantsCount: number }) {
   // 0. Revenue Metrics
   const cashRevenue = registrations
-    .filter(r => r.paymentMethod === 'cash' && r.paymentStatus === 'paid')
+    .filter(r => r.status !== 'cancelled' && r.paymentMethod === 'cash' && r.paymentStatus === 'paid')
     .reduce((sum, r) => sum + (r.amountPaid || 0), 0);
   const cardRevenue = registrations
-    .filter(r => r.paymentMethod === 'card' && r.paymentStatus === 'paid')
+    .filter(r => r.status !== 'cancelled' && r.paymentMethod === 'card' && r.paymentStatus === 'paid')
     .reduce((sum, r) => sum + (r.amountPaid || 0), 0);
   const totalRevenue = cashRevenue + cardRevenue;
   const underpayments = registrations
@@ -2752,25 +3072,44 @@ function AnalyticsDashboard({ events, records, registrations, participantsCount 
 
   const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
 
+  const totalPaidCount = registrations.filter(r => r.paymentStatus === 'paid' && r.status !== 'cancelled').length;
+  const totalRegisteredCount = registrations.filter(r => r.status !== 'cancelled').length;
+
   return (
     <div className="space-y-8 md:space-y-12">
       {/* Top Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
-        <div className="bg-white p-5 md:p-8 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-xl">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-4 md:gap-6">
+        <div className="bg-white p-5 md:p-6 rounded-[32px] border border-slate-100 shadow-xl">
+          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Участники</p>
+          <p className="text-xl md:text-2xl font-black text-slate-900">{participantsCount.toLocaleString()}</p>
+        </div>
+        <div className="bg-white p-5 md:p-6 rounded-[32px] border border-slate-100 shadow-xl">
+          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Мероприятия</p>
+          <p className="text-xl md:text-2xl font-black text-slate-900">{events.length}</p>
+        </div>
+        <div className="bg-white p-5 md:p-6 rounded-[32px] border border-slate-100 shadow-xl">
+          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Записалось</p>
+          <p className="text-xl md:text-2xl font-black text-slate-900">{totalRegisteredCount}</p>
+        </div>
+        <div className="bg-white p-5 md:p-6 rounded-[32px] border border-slate-100 shadow-xl">
+          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Оплатило</p>
+          <p className="text-xl md:text-2xl font-black text-green-600">{totalPaidCount}</p>
+        </div>
+        <div className="bg-white p-5 md:p-6 rounded-[32px] border border-slate-100 shadow-xl">
           <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Наличные</p>
-          <p className="text-xl md:text-3xl font-black text-green-600">{cashRevenue.toLocaleString()} ₽</p>
+          <p className="text-xl md:text-2xl font-black text-green-600">{cashRevenue.toLocaleString()} ₽</p>
         </div>
-        <div className="bg-white p-5 md:p-8 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-xl">
+        <div className="bg-white p-5 md:p-6 rounded-[32px] border border-slate-100 shadow-xl">
           <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Безналичные</p>
-          <p className="text-xl md:text-3xl font-black text-blue-600">{cardRevenue.toLocaleString()} ₽</p>
+          <p className="text-xl md:text-2xl font-black text-blue-600">{cardRevenue.toLocaleString()} ₽</p>
         </div>
-        <div className="bg-white p-5 md:p-8 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-xl">
+        <div className="bg-white p-5 md:p-6 rounded-[32px] border border-slate-100 shadow-xl">
           <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Недоплаты</p>
-          <p className="text-xl md:text-3xl font-black text-amber-600">{underpayments.toLocaleString()} ₽</p>
+          <p className="text-xl md:text-2xl font-black text-amber-600">{underpayments.toLocaleString()} ₽</p>
         </div>
-        <div className="bg-white p-5 md:p-8 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-xl">
-          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Общая выручка</p>
-          <p className="text-xl md:text-3xl font-black text-indigo-700">{totalRevenue.toLocaleString()} ₽</p>
+        <div className="bg-white p-5 md:p-6 rounded-[32px] border border-slate-100 shadow-xl">
+          <p className="text-[10px] font-black uppercase text-slate-400 mb-2">Выручка</p>
+          <p className="text-xl md:text-2xl font-black text-indigo-700">{totalRevenue.toLocaleString()} ₽</p>
         </div>
       </div>
 
